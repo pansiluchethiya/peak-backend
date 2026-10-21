@@ -69,6 +69,7 @@ function normalize(raw: Record<string, unknown>, type: MediaType): TmdbResult {
 }
 
 export async function tmdbSearch(query: string, type: MediaType): Promise<TmdbResult[]> {
+  requireKey();
   const data = await cached(`search:${type}:${query}`, () =>
     request<{ results: Record<string, unknown>[] }>(`/search/${type}`, { query }),
   );
@@ -76,6 +77,7 @@ export async function tmdbSearch(query: string, type: MediaType): Promise<TmdbRe
 }
 
 export async function tmdbTitle(tmdbId: string, type: MediaType): Promise<TmdbTitle> {
+  requireKey();
   const data = await cached(`title:${type}:${tmdbId}`, () =>
     request<Record<string, unknown>>(`/${type}/${tmdbId}`),
   );
@@ -86,6 +88,7 @@ export async function tmdbTitle(tmdbId: string, type: MediaType): Promise<TmdbTi
 }
 
 export async function tmdbRecommendations(tmdbId: string, type: MediaType): Promise<TmdbResult[]> {
+  requireKey();
   const data = await cached(`recs:${type}:${tmdbId}`, () =>
     request<{ results: Record<string, unknown>[] }>(`/${type}/${tmdbId}/recommendations`),
   );

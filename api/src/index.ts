@@ -4,14 +4,30 @@ import { pathToFileURL } from 'node:url';
 import { healthRoutes } from './routes/health.js';
 import { brandingRoutes } from './routes/branding.js';
 import { searchRoutes } from './routes/search.js';
+import { recommendationsRoutes } from './routes/recommendations.js';
+import { streamRoutes } from './routes/stream.js';
+import { ProviderManager } from './providers/index.js';
+import { defaultProviders } from './providers/registry.js';
+import type { Provider } from './providers/types.js';
 
-export function buildServer(): FastifyInstance {
+export interface ServerOptions {
+  providers?: Provider[];
+  manager?: ProviderManager;
+  timeoutMs?: number;
+}
+
+export function buildServer(options: ServerOptions = {}): FastifyInstance {
+  const manager =
+    options.manager ??
+    new ProviderManager(options.providers ?? defaultProviders(), { timeoutMs: options.timeoutMs });
   const app = Fastify({ logger: false, trustProxy: true });
 
   app.register(cors, { origin: true });
   app.register(healthRoutes);
   app.register(brandingRoutes);
   app.register(searchRoutes);
+  app.register(recommendationsRoutes);
+  app.register(streamRoutes, { manager });
 
   return app;
 }

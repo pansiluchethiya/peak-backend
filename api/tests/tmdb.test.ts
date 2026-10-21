@@ -73,4 +73,23 @@ describe('tmdb', () => {
     expect(res.json().error).toMatch(/TMDB_API_KEY/);
     await app.close();
   });
+
+  it('recommendations route returns 503 without a key and results with one', async () => {
+    const noKeyApp = buildServer();
+    const missing = await noKeyApp.inject({ method: 'GET', url: '/api/v1/recommendations/27205' });
+    expect(missing.statusCode).toBe(503);
+    await noKeyApp.close();
+
+    process.env.TMDB_API_KEY = 'test-key';
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(JSON.stringify({
+        results: [{ id: 123, title: 'Interstellar', release_date: '2014-11-05', poster_path: null }],
+      }), { status: 200 }),
+    ));
+    const app = buildServer();
+    const res = await app.inject({ method: 'GET', url: '/api/v1/recommendations/27205?type=movie' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().results[0]).toMatchObject({ tmdbId: '123', title: 'Interstellar' });
+    await app.close();
+  });
 });

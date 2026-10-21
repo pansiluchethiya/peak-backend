@@ -81,8 +81,45 @@ export function listProviderStates(): Array<{
   }));
 }
 
-export function recordProviderResult(id: string, ok: boolean): void {
+export interface SessionRecord {
+  ts: string;
+  tmdbId: string;
+  title: string;
+  mediaType: 'movie' | 'tv';
+  provider: string;
+  quality: string;
+  ip: string;
+  country: string;
+  city: string;
+  device: string;
+  browser: string;
+  fpHash: string | null;
+}
+
+export function insertSession(record: SessionRecord): void {
   getDb()
+    .prepare(
+      `INSERT INTO sessions
+        (ts, tmdb_id, title, media_type, provider, quality, ip, country, city, device, browser, fp_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      record.ts,
+      record.tmdbId,
+      record.title,
+      record.mediaType,
+      record.provider,
+      record.quality,
+      record.ip,
+      record.country,
+      record.city,
+      record.device,
+      record.browser,
+      record.fpHash,
+    );
+}
+
+export function recordProviderResult(id: string, ok: boolean): void {  getDb()
     .prepare(
       `INSERT INTO providers (id, enabled, last_success, error_count) VALUES (?, 1, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
