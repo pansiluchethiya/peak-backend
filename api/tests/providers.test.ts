@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ProviderManager } from '../src/providers/index.js';
 import type { MediaRef, Provider, ProviderResult } from '../src/providers/types.js';
-import { resetDbForTests, setProviderEnabled } from '../src/services/db.js';
+import { listProviderStates, resetDbForTests, setProviderEnabled } from '../src/services/db.js';
 
 const media: MediaRef = { tmdbId: '27205', type: 'movie', title: 'Inception' };
 
@@ -80,5 +80,22 @@ describe('ProviderManager', () => {
     const a = makeProvider('a', { sources: [source('https://cdn/a.m3u8')], subtitles: [] });
     const result = await new ProviderManager([a]).getSources(media);
     expect(result.diagnostics[0].latencyMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('marks a provider failed when it returns no sources and reports an error', async () => {
+    const empty = makeProvider('empty', {
+      sources: [],
+      subtitles: [],
+      diagnostics: [{ provider: 'empty', ok: false, latencyMs: 5, error: 'not configured' }],
+    });
+
+    const result = await new ProviderManager([empty]).getSources(media);
+
+    expect(result.diagnostics[0]).toMatchObject({ provider: 'empty', ok: false });
+    const states = listProviderStates();
+    expect(states.find((state) => state.id === 'empty')).toMatchObject({
+      lastSuccess: null,
+      errorCount: 1,
+    });
   });
 });

@@ -75,6 +75,11 @@ export function adminCookie(token: string): string {
   return `${ADMIN_COOKIE}=${token}; HttpOnly; Path=/; Max-Age=${TOKEN_TTL_SECONDS}; SameSite=Lax${secure}`;
 }
 
+export function clearAdminCookie(): string {
+  const secure = (process.env.PUBLIC_URL ?? '').startsWith('https://') ? '; Secure' : '';
+  return `${ADMIN_COOKIE}=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax${secure}`;
+}
+
 function readToken(request: FastifyRequest): string | null {
   const header = request.headers.authorization;
   if (header?.startsWith('Bearer ')) return header.slice(7).trim();

@@ -70,6 +70,18 @@ describe('admin auth', () => {
     const res = await app.inject({ method: 'GET', url: '/api/v1/admin/providers' });
     expect(res.statusCode).toBe(401);
   });
+
+  it('clears the session cookie on logout', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/logout',
+      headers: { cookie },
+    });
+    expect(res.statusCode).toBe(200);
+    const setCookie = res.headers['set-cookie'];
+    const raw = Array.isArray(setCookie) ? setCookie[0] : String(setCookie);
+    expect(raw).toMatch(/Max-Age=0/);
+  });
 });
 
 describe('admin providers', () => {
@@ -112,6 +124,27 @@ describe('admin providers', () => {
       sources: [expect.objectContaining({ rawUrl: 'https://cdn.example/a.m3u8', provider: 'fake' })],
       diagnostics: [expect.objectContaining({ provider: 'fake', ok: true })],
     });
+  });
+
+  it('scopes a test scrape to one provider', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/test',
+      headers: { cookie },
+      payload: { tmdbId: '27205', type: 'movie', provider: 'fake' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().diagnostics).toEqual([expect.objectContaining({ provider: 'fake' })]);
+  });
+
+  it('rejects an unknown provider for a test scrape', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/test',
+      headers: { cookie },
+      payload: { tmdbId: '27205', type: 'movie', provider: 'missing' },
+    });
+    expect(res.statusCode).toBe(404);
   });
 });
 

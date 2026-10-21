@@ -1,11 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { existsSync, statSync } from 'node:fs';
-import type { ProviderManager } from '../providers/index.js';
-import type { MediaRef } from '../providers/types.js';
+import { ProviderManager, type MediaRef } from '../providers/index.js';
 import {
   adminCookie,
   adminPasswordConfigured,
   changeAdminPassword,
+  clearAdminCookie,
   passwordMatches,
   requireAdmin,
   signAdminToken,
@@ -73,6 +73,11 @@ export async function adminRoutes(app: FastifyInstance, options: AdminOptions): 
       return reply.code(401).send({ error: 'invalid password' });
     }
     reply.header('set-cookie', adminCookie(signAdminToken()));
+    return { ok: true };
+  });
+
+  app.post('/api/v1/admin/logout', async (_request, reply) => {
+    reply.header('set-cookie', clearAdminCookie());
     return { ok: true };
   });
 
@@ -151,12 +156,21 @@ export async function adminRoutes(app: FastifyInstance, options: AdminOptions): 
       type?: unknown;
       season?: unknown;
       episode?: unknown;
+      provider?: unknown;
     };
     if (typeof body.tmdbId !== 'string' || !body.tmdbId.trim()) {
       return reply.code(400).send({ error: 'tmdbId is required' });
     }
     if (body.type !== 'movie' && body.type !== 'tv') {
       return reply.code(400).send({ error: 'type must be movie or tv' });
+    }
+    let target = manager;
+    if (typeof body.provider === 'string' && body.provider) {
+      const selected = manager.list().filter((provider) => provider.id === body.provider);
+      if (selected.length === 0) {
+        return reply.code(404).send({ error: 'unknown provider' });
+      }
+      target = new ProviderManager(selected);
     }
     const media: MediaRef = {
       tmdbId: body.tmdbId.trim(),
@@ -165,7 +179,7 @@ export async function adminRoutes(app: FastifyInstance, options: AdminOptions): 
       episode: typeof body.episode === 'number' ? body.episode : undefined,
     };
     const started = Date.now();
-    const result = await manager.getSources(media);
+    const result = await target.getSources(media);
     return {
       ...result,
       latencyMs: Date.now() - started,

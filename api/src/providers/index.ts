@@ -44,11 +44,18 @@ export class ProviderManager {
         const started = Date.now();
         try {
           const result = await withTimeout(provider.getSources(media), timeoutMs);
-          recordProviderResult(provider.id, true);
+          const reportedFailure = (result.diagnostics ?? []).find((diagnostic) => !diagnostic.ok);
+          const ok = result.sources.length > 0 || !reportedFailure;
+          recordProviderResult(provider.id, ok);
           return {
             provider,
             result,
-            diagnostic: { provider: provider.id, ok: true, latencyMs: Date.now() - started },
+            diagnostic: {
+              provider: provider.id,
+              ok,
+              latencyMs: Date.now() - started,
+              ...(ok ? {} : { error: reportedFailure?.error ?? 'no playable sources' }),
+            },
           };
         } catch (error) {
           recordProviderResult(provider.id, false);
