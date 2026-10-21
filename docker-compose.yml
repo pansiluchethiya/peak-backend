@@ -1,0 +1,63 @@
+services:
+  api:
+    build: ./api
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - TMDB_API_KEY=${TMDB_API_KEY:-}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - DB_PATH=/data/peakmovies.db
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-changeme}
+      - PUBLIC_URL=${PUBLIC_URL:-http://localhost:3000}
+      - PROXY_SECRET=${PROXY_SECRET:-dev-only-secret-change-me}
+      - BRANDING_FILE=/config/branding.json
+    volumes:
+      - ./data:/data
+      - ./config:/config:ro
+    depends_on:
+      redis:
+        condition: service_started
+
+  player:
+    build: ./player
+    restart: unless-stopped
+    environment:
+      - API_URL=http://api:3000
+      - PUBLIC_API_URL=${PUBLIC_URL:-http://localhost:3000}
+      - BRANDING_FILE=/config/branding.json
+    volumes:
+      - ./config:/config:ro
+    depends_on:
+      - api
+
+  admin:
+    build: ./admin
+    restart: unless-stopped
+    environment:
+      - API_URL=http://api:3000
+      - PUBLIC_API_URL=${PUBLIC_URL:-http://localhost:3000}
+    depends_on:
+      - api
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - ./data/redis:/data
+    command: redis-server --appendonly yes
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    profiles: ["proxy"]
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+      - player
+      - admin
