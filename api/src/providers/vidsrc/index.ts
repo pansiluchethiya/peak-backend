@@ -307,9 +307,17 @@ async function resolveNestedSources(embedHtml: string, embed: string): Promise<R
         throw new Error('master playlist was invalid');
       }
       const variants = parseMasterPlaylist(master, masterUrl, headers, token);
-      if (variants.length > 0) return { sources: variants, subtitles };
+      if (variants.length > 0) {
+        return {
+          sources: [
+            { rawUrl: masterUrl, quality: 'auto', codec: 'auto', headers, adaptive: true },
+            ...variants,
+          ],
+          subtitles,
+        };
+      }
       return {
-        sources: [{ rawUrl: masterUrl, quality: 'auto', codec: 'h264', headers }],
+        sources: [{ rawUrl: masterUrl, quality: 'auto', codec: 'auto', headers, adaptive: true }],
         subtitles,
       };
     } catch (error) {

@@ -3,13 +3,13 @@ import type { Diagnostic } from '../lib/types';
 interface Props {
   title: string;
   message: string;
-  diagnostics: Diagnostic[];
+  diagnostics?: Diagnostic[];
   onTryAnother: () => void;
   onReload: () => void;
 }
 
 export function ErrorState({ title, message, diagnostics, onTryAnother, onReload }: Props) {
-  const failures = diagnostics.filter((item) => !item.ok);
+  const failures = (diagnostics ?? []).filter((item) => !item.ok);
 
   return (
     <div className="error-layer" role="alert">

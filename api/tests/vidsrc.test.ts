@@ -155,6 +155,11 @@ describe('vidsrc provider', () => {
 
     expect(result.sources).toEqual([
       expect.objectContaining({
+        rawUrl: 'https://stream.test/master.m3u8?token=play-token',
+        quality: 'auto',
+        adaptive: true,
+      }),
+      expect.objectContaining({
         rawUrl: 'https://stream.test/pl/abc/720/index.m3u8?token=play-token',
         quality: '720p',
         codec: 'h264',

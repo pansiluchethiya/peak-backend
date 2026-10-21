@@ -20,7 +20,10 @@ describe('vidapi provider', () => {
   it('normalizes API sources and subtitles', async () => {
     vi.stubGlobal('fetch', vi.fn(async () =>
       new Response(JSON.stringify({
-        sources: [{ url: 'https://cdn.example/master.m3u8', quality: '720p', codec: 'h264' }],
+        sources: [
+          { url: 'https://cdn.example/master.m3u8', quality: 'auto', codec: 'auto' },
+          { url: 'https://cdn.example/720.m3u8', quality: '720p', codec: 'h264' },
+        ],
         subtitles: [{ url: 'https://cdn.example/en.vtt', language: 'en', label: 'English' }],
       }), { status: 200 }),
     ));
@@ -28,7 +31,8 @@ describe('vidapi provider', () => {
     const result = await vidapiProvider.getSources({ tmdbId: '27205', type: 'movie' });
 
     expect(result.sources).toEqual([
-      expect.objectContaining({ rawUrl: 'https://cdn.example/master.m3u8', quality: '720p', codec: 'h264' }),
+      expect.objectContaining({ rawUrl: 'https://cdn.example/master.m3u8', quality: 'auto', codec: 'auto', adaptive: true }),
+      expect.objectContaining({ rawUrl: 'https://cdn.example/720.m3u8', quality: '720p', codec: 'h264', adaptive: false }),
     ]);
     expect(result.subtitles).toEqual([
       expect.objectContaining({ rawUrl: 'https://cdn.example/en.vtt', lang: 'en', label: 'English' }),

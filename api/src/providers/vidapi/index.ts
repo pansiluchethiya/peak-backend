@@ -9,6 +9,7 @@ interface ApiSource {
   quality?: string;
   codec?: string;
   headers?: Record<string, string>;
+  adaptive?: boolean;
 }
 
 interface ApiSubtitle {
@@ -57,6 +58,7 @@ export const vidapiProvider: Provider = {
           quality: source.quality ?? 'auto',
           codec: source.codec ?? 'h264',
           headers: { 'User-Agent': USER_AGENT, ...source.headers },
+          adaptive: source.adaptive ?? (source.quality === 'auto'),
         }));
       const subtitles: RawSubtitle[] = (data.subtitles ?? [])
         .filter((subtitle) => typeof subtitle.url === 'string' && subtitle.url.length > 0)

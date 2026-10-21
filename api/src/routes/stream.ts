@@ -93,6 +93,7 @@ async function handleStream(
     quality: source.quality,
     codec: source.codec,
     provider: source.provider,
+    adaptive: source.adaptive === true,
     expiresIn: 3600,
   }));
   const subtitles = aggregated.subtitles.map((subtitle) => ({

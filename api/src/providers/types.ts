@@ -14,6 +14,8 @@ export interface RawSource {
   codec: string;
   headers?: Record<string, string>;
   provider?: string;
+  /** True when the URL is a multi-bitrate master playlist suitable for ABR. */
+  adaptive?: boolean;
 }
 
 export interface RawSubtitle {

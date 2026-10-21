@@ -89,6 +89,31 @@ describe('stream routes', () => {
     });
   });
 
+  it('marks the adaptive master source for the player', async () => {
+    const adaptiveProvider: Provider = {
+      id: 'adaptive',
+      name: 'Adaptive',
+      async getSources() {
+        return {
+          sources: [
+            { rawUrl: 'https://cdn.example/master.m3u8', quality: 'auto', codec: 'auto', adaptive: true },
+            { rawUrl: 'https://cdn.example/720.m3u8', quality: '720p', codec: 'h264' },
+          ],
+          subtitles: [],
+        };
+      },
+    };
+    const adaptiveApp = buildServer({ providers: [adaptiveProvider] });
+    const res = await adaptiveApp.inject({ method: 'GET', url: '/api/v1/stream/movie/969681' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().sources).toEqual([
+      expect.objectContaining({ quality: 'auto', adaptive: true }),
+      expect.objectContaining({ quality: '720p', adaptive: false }),
+    ]);
+    await adaptiveApp.close();
+  });
+
   it('builds tv requests with season and episode', async () => {
     const res = await app.inject({
       method: 'GET',

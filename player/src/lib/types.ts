@@ -12,6 +12,7 @@ export interface Source {
   quality: string;
   codec: string;
   provider: string;
+  adaptive?: boolean;
   expiresIn: number;
 }
 
