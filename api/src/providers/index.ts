@@ -83,6 +83,6 @@ export class ProviderManager {
       }
     }
 
-    return { sources, subtitles, diagnostics: outcomes.map((outcome) => outcome.diagnostic) };
+    return { sources, subtitles, diagnostics: outcomes.flatMap((outcome) => [outcome.diagnostic, ...(outcome.result?.diagnostics ?? [])]) };
   }
 }

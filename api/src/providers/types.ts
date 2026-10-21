@@ -26,6 +26,7 @@ export interface RawSubtitle {
 export interface ProviderResult {
   sources: RawSource[];
   subtitles: RawSubtitle[];
+  diagnostics?: ProviderDiagnostic[];
 }
 
 export interface ProviderDiagnostic {
