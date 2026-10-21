@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { buildServer } from '../src/index.js';
 import type { Provider } from '../src/providers/types.js';
 import { getDb, insertSession, resetDbForTests } from '../src/services/db.js';
@@ -18,6 +21,7 @@ const provider: Provider = {
 let app: Awaited<ReturnType<typeof buildServer>>;
 let cookie: string;
 const previousPassword = process.env.ADMIN_PASSWORD;
+const previousBrandingFile = process.env.BRANDING_FILE;
 
 async function login(): Promise<string> {
   const res = await app.inject({
@@ -48,6 +52,8 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   if (previousPassword === undefined) delete process.env.ADMIN_PASSWORD;
   else process.env.ADMIN_PASSWORD = previousPassword;
+  if (previousBrandingFile === undefined) delete process.env.BRANDING_FILE;
+  else process.env.BRANDING_FILE = previousBrandingFile;
 });
 
 describe('admin auth', () => {
@@ -192,5 +198,61 @@ describe('admin stats and sessions', () => {
       headers: { cookie },
     });
     expect(vacuum.statusCode).toBe(200);
+  });
+});
+
+describe('admin settings', () => {
+  it('reads and updates branding from the configured file', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'peakmovies-branding-'));
+    const file = join(directory, 'branding.json');
+    writeFileSync(
+      file,
+      JSON.stringify({ name: 'Before', logoUrl: '/logo.svg', accentColor: '#111111', tagline: 'Old' }),
+    );
+    process.env.BRANDING_FILE = file;
+
+    const before = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/branding',
+      headers: { cookie },
+    });
+    expect(before.statusCode).toBe(200);
+    expect(before.json().name).toBe('Before');
+
+    const update = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/admin/branding',
+      headers: { cookie },
+      payload: { name: 'After', logoUrl: '/new.svg', accentColor: '#22c55e', tagline: 'New' },
+    });
+    expect(update.statusCode).toBe(200);
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({
+      name: 'After',
+      accentColor: '#22c55e',
+    });
+  });
+
+  it('changes the admin password and invalidates the old one', async () => {
+    const change = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/password',
+      headers: { cookie },
+      payload: { currentPassword: 'admin-secret', newPassword: 'new-secret' },
+    });
+    expect(change.statusCode).toBe(200);
+
+    const oldLogin = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/login',
+      payload: { password: 'admin-secret' },
+    });
+    expect(oldLogin.statusCode).toBe(401);
+
+    const newLogin = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/login',
+      payload: { password: 'new-secret' },
+    });
+    expect(newLogin.statusCode).toBe(200);
   });
 });

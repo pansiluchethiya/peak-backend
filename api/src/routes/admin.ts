@@ -1,14 +1,16 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { existsSync, statSync } from 'node:fs';
 import type { ProviderManager } from '../providers/index.js';
 import type { MediaRef } from '../providers/types.js';
 import {
   adminCookie,
   adminPasswordConfigured,
+  changeAdminPassword,
   passwordMatches,
   requireAdmin,
   signAdminToken,
 } from '../middleware/auth.js';
+import { readBranding, writeBranding, type BrandingConfig } from '../services/branding.js';
 import {
   getDb,
   listProviderStates,
@@ -72,6 +74,46 @@ export async function adminRoutes(app: FastifyInstance, options: AdminOptions): 
     }
     reply.header('set-cookie', adminCookie(signAdminToken()));
     return { ok: true };
+  });
+
+  app.post('/api/v1/admin/password', { preHandler: requireAdmin }, async (request, reply) => {
+    const body = (request.body ?? {}) as { currentPassword?: unknown; newPassword?: unknown };
+    if (typeof body.currentPassword !== 'string' || typeof body.newPassword !== 'string') {
+      return reply.code(400).send({ error: 'currentPassword and newPassword are required' });
+    }
+    if (body.newPassword.length < 8) {
+      return reply.code(400).send({ error: 'new password must be at least 8 characters' });
+    }
+    if (!passwordMatches(body.currentPassword)) {
+      return reply.code(401).send({ error: 'current password is incorrect' });
+    }
+    changeAdminPassword(body.newPassword);
+    return { ok: true };
+  });
+
+  app.get('/api/v1/admin/branding', { preHandler: requireAdmin }, async () => {
+    return readBranding();
+  });
+
+  app.put('/api/v1/admin/branding', { preHandler: requireAdmin }, async (request, reply) => {
+    const body = (request.body ?? {}) as Partial<Record<keyof BrandingConfig, unknown>>;
+    const fields: Array<keyof BrandingConfig> = ['name', 'logoUrl', 'accentColor', 'tagline'];
+    for (const field of fields) {
+      if (typeof body[field] !== 'string' || !(body[field] as string).trim()) {
+        return reply.code(400).send({ error: `${field} must be a non-empty string` });
+      }
+    }
+    const accentColor = (body.accentColor as string).trim();
+    if (!/^#[0-9a-fA-F]{6}$/.test(accentColor)) {
+      return reply.code(400).send({ error: 'accentColor must be a hex colour like #6366f1' });
+    }
+    const config: BrandingConfig = {
+      name: (body.name as string).trim(),
+      logoUrl: (body.logoUrl as string).trim(),
+      accentColor,
+      tagline: (body.tagline as string).trim(),
+    };
+    return writeBranding(config);
   });
 
   app.get('/api/v1/admin/providers', { preHandler: requireAdmin }, async () => {
