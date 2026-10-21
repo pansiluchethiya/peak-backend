@@ -27,6 +27,11 @@ interface DomainOutcome {
   diagnostic: ProviderDiagnostic;
 }
 
+interface ResolvedSources {
+  sources: RawSource[];
+  subtitles: RawSubtitle[];
+}
+
 function embedUrl(domain: string, media: MediaRef): string {
   if (media.type === 'tv') {
     return `https://${domain}/embed/tv/${media.tmdbId}/${media.season ?? 1}/${media.episode ?? 1}`;
@@ -43,9 +48,25 @@ function qualityOf(url: string): string {
   return match ? `${match[1]}p` : 'auto';
 }
 
+function qualityFromWidth(width: number): string {
+  if (width >= 3840) return '2160p';
+  if (width >= 2560) return '1440p';
+  if (width >= 1920) return '1080p';
+  if (width >= 1280) return '720p';
+  if (width >= 854) return '480p';
+  if (width >= 640) return '360p';
+  return 'auto';
+}
+
 function codecOf(url: string): string {
   if (/h\.?265|hevc/i.test(url)) return 'h265';
   if (/av1/i.test(url)) return 'av1';
+  return 'h264';
+}
+
+function codecFromAttributes(attributes: string): string {
+  if (/hvc1|hev1/i.test(attributes)) return 'h265';
+  if (/av01/i.test(attributes)) return 'av1';
   return 'h264';
 }
 
@@ -72,7 +93,7 @@ function extractSources(html: string, domain: string): RawSource[] {
   }));
 }
 
-function extractSubtitles(html: string, domain: string): RawSubtitle[] {
+function extractSubtitles(html: string, baseUrl: string): RawSubtitle[] {
   const subtitles: RawSubtitle[] = [];
   for (const match of decodeHtml(html).matchAll(/<track\b[^>]*>/gi)) {
     const tag = match[0];
@@ -81,35 +102,228 @@ function extractSubtitles(html: string, domain: string): RawSubtitle[] {
     const lang = /\bsrclang=["']([^"']+)["']/i.exec(tag)?.[1] ?? 'en';
     const label = /\blabel=["']([^"']+)["']/i.exec(tag)?.[1] ?? lang.toUpperCase();
     subtitles.push({
-      rawUrl: new URL(src, `https://${domain}`).toString(),
+      rawUrl: new URL(src, baseUrl).toString(),
       lang,
       label,
-      headers: { Referer: `https://${domain}/`, 'User-Agent': USER_AGENT },
+      headers: { Referer: `${new URL(baseUrl).origin}/`, 'User-Agent': USER_AGENT },
     });
   }
   return subtitles;
 }
 
-async function scrapeDomain(domain: string, media: MediaRef): Promise<DomainOutcome> {
-  const started = Date.now();
+function dedupeSubtitles(subtitles: RawSubtitle[]): RawSubtitle[] {
+  const seen = new Set<string>();
+  return subtitles.filter((subtitle) => {
+    if (seen.has(subtitle.rawUrl)) return false;
+    seen.add(subtitle.rawUrl);
+    return true;
+  });
+}
+
+async function fetchText(url: string, referer?: string): Promise<string> {
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': USER_AGENT,
+      Accept: 'text/html,application/xhtml+xml,application/json',
+      ...(referer ? { Referer: referer } : {}),
+    },
+    signal: AbortSignal.timeout(DOMAIN_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.text();
+}
+
+function extractWindowJson(html: string, name: string): Record<string, unknown> | undefined {
+  const match = new RegExp(`${name}\\s*=\\s*(\\{[^<]*?\\})\\s*;`, 's').exec(html);
+  if (!match) return undefined;
   try {
-    const res = await fetch(embedUrl(domain, media), {
-      headers: {
-        'User-Agent': USER_AGENT,
-        Referer: `https://${domain}/`,
-        Accept: 'text/html,application/xhtml+xml',
-      },
+    return JSON.parse(match[1]) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+function withPlayToken(url: string, token: string): string {
+  if (!token) return url;
+  if (url.includes('__TOKEN__')) return url.split('__TOKEN__').join(token);
+  if (/[?&]token=/.test(url)) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
+}
+
+function parseMasterPlaylist(
+  text: string,
+  masterUrl: string,
+  headers: Record<string, string>,
+  token: string,
+): RawSource[] {
+  const lines = text.split(/\r?\n/);
+  const sources: RawSource[] = [];
+  let attributes: string | undefined;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (line.startsWith('#EXT-X-STREAM-INF:')) {
+      attributes = line;
+      continue;
+    }
+    if (!attributes || !line || line.startsWith('#')) continue;
+
+    const width = Number(/RESOLUTION=(\d+)x\d+/i.exec(attributes)?.[1] ?? 0);
+    const resolved = withPlayToken(new URL(line, masterUrl).toString(), token);
+    sources.push({
+      rawUrl: resolved,
+      quality: qualityFromWidth(width),
+      codec: codecFromAttributes(attributes),
+      headers,
+    });
+    attributes = undefined;
+  }
+
+  return sources;
+}
+
+interface DecryptorExports {
+  memory: WebAssembly.Memory;
+  alloc(length: number): number;
+  decrypt(pointer: number, length: number): number;
+}
+
+async function decryptStreamUrls(
+  encrypted: string,
+  vs: { wasm_url?: unknown; wasm?: unknown },
+): Promise<string[]> {
+  let bytes: BufferSource;
+  if (typeof vs.wasm_url === 'string') {
+    const res = await fetch(vs.wasm_url, {
+      headers: { 'User-Agent': USER_AGENT },
       signal: AbortSignal.timeout(DOMAIN_TIMEOUT_MS),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`decryptor HTTP ${res.status}`);
+    bytes = await res.arrayBuffer();
+  } else if (typeof vs.wasm === 'string') {
+    bytes = Buffer.from(vs.wasm, 'base64');
+  } else {
+    throw new Error('encrypted sources without a decryptor');
+  }
 
-    const html = await res.text();
-    const sources = extractSources(html, domain);
-    if (sources.length === 0) throw new Error('no playable source found');
+  const { instance } = await WebAssembly.instantiate(bytes, {});
+  const exports = instance.exports as unknown as DecryptorExports;
+  const encoded = Buffer.from(encrypted, 'base64');
+  const pointer = exports.alloc(encoded.length);
+  new Uint8Array(exports.memory.buffer, pointer, encoded.length).set(encoded);
+  const outputLength = exports.decrypt(pointer, encoded.length);
+  const output = new Uint8Array(exports.memory.buffer, pointer + 12, outputLength);
+  return new TextDecoder().decode(output).split('\n').filter(Boolean);
+}
+
+async function resolveNestedSources(embedHtml: string, embed: string): Promise<ResolvedSources> {
+  const apiPath = /data-api=["']([^"']+)["']/i.exec(embedHtml)?.[1];
+  if (!apiPath) return { sources: [], subtitles: [] };
+
+  const sourceResponse = await fetch(new URL(decodeHtml(apiPath), embed), {
+    headers: { 'User-Agent': USER_AGENT, Accept: 'application/json', Referer: embed },
+    signal: AbortSignal.timeout(DOMAIN_TIMEOUT_MS),
+  });
+  if (!sourceResponse.ok) throw new Error(`source API HTTP ${sourceResponse.status}`);
+  const sourceJson = (await sourceResponse.json()) as { src?: unknown };
+  if (typeof sourceJson.src !== 'string') throw new Error('source API returned no nested player');
+
+  const nestedUrl = new URL(sourceJson.src, embed).toString();
+  const nestedHtml = await fetchText(nestedUrl, embed);
+  const cfG = extractWindowJson(nestedHtml, 'window.CFG');
+  const playerPath = typeof cfG?.playerUrl === 'string' ? cfG.playerUrl : nestedUrl;
+  const playerUrl = new URL(playerPath, nestedUrl).toString();
+  const playerHtml = playerUrl === nestedUrl ? nestedHtml : await fetchText(playerUrl, nestedUrl);
+
+  const config = extractWindowJson(playerHtml, 'window.CONFIG') ?? extractWindowJson(nestedHtml, 'window.CONFIG');
+  if (!config || typeof config.api !== 'string') throw new Error('player config has no stream API');
+
+  const api = new URL(config.api);
+  if (typeof config.apiToken === 'string' && config.apiToken) {
+    api.searchParams.set('api_token', config.apiToken);
+  }
+  const streamResponse = await fetch(api, {
+    headers: {
+      'User-Agent': USER_AGENT,
+      Accept: 'application/json',
+      Referer: `${new URL(nestedUrl).origin}/`,
+    },
+    signal: AbortSignal.timeout(DOMAIN_TIMEOUT_MS),
+  });
+  if (!streamResponse.ok) throw new Error(`stream API HTTP ${streamResponse.status}`);
+  const payload = (await streamResponse.json()) as {
+    data?: { stream_urls?: unknown };
+    vs?: { wasm_url?: unknown; wasm?: unknown };
+  };
+  const encoded = payload.data?.stream_urls;
+  const streamUrls = Array.isArray(encoded)
+    ? encoded.filter((value): value is string => typeof value === 'string')
+    : typeof encoded === 'string'
+      ? await decryptStreamUrls(encoded, payload.vs ?? {})
+      : [];
+
+  if (streamUrls.length === 0) throw new Error('stream API returned no sources');
+
+  const origin = new URL(nestedUrl).origin;
+  const headers = {
+    Referer: `${origin}/`,
+    Origin: origin,
+    'User-Agent': USER_AGENT,
+  };
+  const subtitles = dedupeSubtitles([
+    ...extractSubtitles(nestedHtml, nestedUrl),
+    ...extractSubtitles(playerHtml, playerUrl),
+  ]);
+
+  const tokens = new Map<string, string>();
+  let lastError: unknown;
+  for (const candidate of streamUrls.slice(0, 3)) {
+    try {
+      const streamOrigin = new URL(candidate).origin;
+      let token = tokens.get(streamOrigin);
+      if (token === undefined) {
+        token = (await fetchText(`${streamOrigin}/generate.php`)).trim();
+        tokens.set(streamOrigin, token);
+      }
+
+      const masterUrl = withPlayToken(candidate, token);
+      const master = await fetchText(masterUrl, `${origin}/`);
+      const variants = parseMasterPlaylist(master, masterUrl, headers, token);
+      if (variants.length > 0) return { sources: variants, subtitles };
+      return {
+        sources: [{ rawUrl: masterUrl, quality: 'auto', codec: 'h264', headers }],
+        subtitles,
+      };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('no playable source found');
+}
+
+async function scrapeDomain(domain: string, media: MediaRef): Promise<DomainOutcome> {
+  const started = Date.now();
+  const embed = embedUrl(domain, media);
+  try {
+    const html = await fetchText(embed, `https://${domain}/`);
+    let resolved: ResolvedSources = { sources: [], subtitles: [] };
+    let pipelineError: unknown;
+
+    try {
+      resolved = await resolveNestedSources(html, embed);
+    } catch (error) {
+      pipelineError = error;
+    }
+
+    const sources = resolved.sources.length > 0 ? resolved.sources : extractSources(html, domain);
+    if (sources.length === 0) {
+      throw pipelineError instanceof Error ? pipelineError : new Error('no playable source found');
+    }
 
     return {
       sources,
-      subtitles: extractSubtitles(html, domain),
+      subtitles: dedupeSubtitles([...resolved.subtitles, ...extractSubtitles(html, embed)]),
       diagnostic: { provider: `vidsrc:${domain}`, ok: true, latencyMs: Date.now() - started },
     };
   } catch (error) {
