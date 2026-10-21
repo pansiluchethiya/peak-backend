@@ -3,7 +3,9 @@ import type { ProviderManager } from '../providers/index.js';
 import type { MediaRef, MediaType } from '../providers/types.js';
 import { tmdbTitle } from '../services/tmdb.js';
 import { encodeProxyData } from '../services/proxyToken.js';
+import { getCache } from '../services/cache.js';
 import { trackStream, type FingerprintQuery } from '../middleware/tracker.js';
+import type { AggregatedResult } from '../providers/types.js';
 
 interface StreamParams {
   tmdbId: string;
@@ -14,6 +16,14 @@ interface TvParams extends StreamParams {
   episode: string;
 }
 
+interface StreamQuery extends FingerprintQuery {
+  invalidate?: string;
+}
+
+function cacheKey(media: MediaRef): string {
+  return `stream:${media.type}:${media.tmdbId}:${media.season ?? 0}:${media.episode ?? 0}`;
+}
+
 function proxyUrl(rawUrl: string, headers?: Record<string, string>): string {
   return `/api/v1/proxy?data=${encodeURIComponent(encodeProxyData({ url: rawUrl, headers }))}`;
 }
@@ -22,9 +32,23 @@ async function handleStream(
   manager: ProviderManager,
   request: FastifyRequest,
   media: MediaRef,
-  fingerprint: FingerprintQuery,
+  fingerprint: StreamQuery,
 ): Promise<unknown> {
   const started = Date.now();
+  const cache = getCache();
+  const key = cacheKey(media);
+  let cacheHit = false;
+
+  if (fingerprint.invalidate) await cache.del(key);
+
+  let aggregated = await cache.get<AggregatedResult>(key);
+  if (aggregated) {
+    cacheHit = true;
+  } else {
+    aggregated = await manager.getSources(media);
+    await cache.set(key, aggregated, 3600);
+  }
+
   let title = fingerprint.title?.trim() || media.title?.trim() || `TMDB ${media.tmdbId}`;
   let year: number | null = null;
 
@@ -38,7 +62,6 @@ async function handleStream(
     }
   }
 
-  const aggregated = await manager.getSources(media);
   const sources = aggregated.sources.map((source) => ({
     url: proxyUrl(source.rawUrl, source.headers),
     quality: source.quality,
@@ -72,7 +95,7 @@ async function handleStream(
     year,
     sources,
     subtitles,
-    meta: { cacheHit: false, latencyMs: Date.now() - started },
+    meta: { cacheHit, latencyMs: Date.now() - started },
     diagnostics: aggregated.diagnostics,
   };
 }
@@ -81,7 +104,7 @@ export async function streamRoutes(
   app: FastifyInstance,
   options: { manager: ProviderManager },
 ): Promise<void> {
-  app.get<{ Params: StreamParams; Querystring: FingerprintQuery }>(
+  app.get<{ Params: StreamParams; Querystring: StreamQuery }>(
     '/api/v1/stream/movie/:tmdbId',
     async (request) => {
       const media: MediaRef = { tmdbId: request.params.tmdbId, type: 'movie' };
@@ -89,7 +112,7 @@ export async function streamRoutes(
     },
   );
 
-  app.get<{ Params: TvParams; Querystring: FingerprintQuery }>(
+  app.get<{ Params: TvParams; Querystring: StreamQuery }>(
     '/api/v1/stream/tv/:tmdbId/:season/:episode',
     async (request) => {
       const media: MediaRef = {

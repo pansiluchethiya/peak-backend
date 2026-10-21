@@ -3,6 +3,7 @@ import { buildServer } from '../src/index.js';
 import type { Provider } from '../src/providers/types.js';
 import { decodeProxyData } from '../src/services/proxyToken.js';
 import { getDb, resetDbForTests } from '../src/services/db.js';
+import { resetCacheForTests } from '../src/services/cache.js';
 
 const desktopUa =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
@@ -30,7 +31,9 @@ let app: Awaited<ReturnType<typeof buildServer>>;
 beforeEach(() => {
   process.env.DB_PATH = ':memory:';
   process.env.PROXY_SECRET = 'test-secret';
+  delete process.env.REDIS_HOST;
   resetDbForTests();
+  resetCacheForTests();
   delete process.env.TMDB_API_KEY;
   app = buildServer({ providers: [provider] });
 });
@@ -116,5 +119,31 @@ describe('stream routes', () => {
     expect(res.statusCode).toBe(200);
     const row = getDb().prepare('SELECT fp_hash FROM sessions').get() as { fp_hash: string | null };
     expect(row.fp_hash).toBeNull();
+  });
+
+  it('serves repeat requests from cache and supports invalidation', async () => {
+    let calls = 0;
+    const counting: Provider = {
+      id: 'count',
+      name: 'Count',
+      async getSources() {
+        calls += 1;
+        return {
+          sources: [{ rawUrl: 'https://cdn.example/count.m3u8', quality: '720p', codec: 'h264', headers: {} }],
+          subtitles: [],
+        };
+      },
+    };
+    const cacheApp = buildServer({ providers: [counting] });
+
+    const first = await cacheApp.inject({ method: 'GET', url: '/api/v1/stream/movie/999' });
+    const second = await cacheApp.inject({ method: 'GET', url: '/api/v1/stream/movie/999' });
+    const invalidated = await cacheApp.inject({ method: 'GET', url: '/api/v1/stream/movie/999?invalidate=1' });
+
+    expect(first.json().meta.cacheHit).toBe(false);
+    expect(second.json().meta.cacheHit).toBe(true);
+    expect(invalidated.json().meta.cacheHit).toBe(false);
+    expect(calls).toBe(2);
+    await cacheApp.close();
   });
 });

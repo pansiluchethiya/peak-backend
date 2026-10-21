@@ -6,6 +6,7 @@ import { brandingRoutes } from './routes/branding.js';
 import { searchRoutes } from './routes/search.js';
 import { recommendationsRoutes } from './routes/recommendations.js';
 import { streamRoutes } from './routes/stream.js';
+import { proxyRoutes } from './routes/proxy.js';
 import { ProviderManager } from './providers/index.js';
 import { defaultProviders } from './providers/registry.js';
 import type { Provider } from './providers/types.js';
@@ -28,6 +29,7 @@ export function buildServer(options: ServerOptions = {}): FastifyInstance {
   app.register(searchRoutes);
   app.register(recommendationsRoutes);
   app.register(streamRoutes, { manager });
+  app.register(proxyRoutes);
 
   return app;
 }
