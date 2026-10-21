@@ -7,6 +7,7 @@ import { searchRoutes } from './routes/search.js';
 import { recommendationsRoutes } from './routes/recommendations.js';
 import { streamRoutes } from './routes/stream.js';
 import { proxyRoutes } from './routes/proxy.js';
+import { adminRoutes } from './routes/admin.js';
 import { ProviderManager } from './providers/index.js';
 import { defaultProviders } from './providers/registry.js';
 import type { Provider } from './providers/types.js';
@@ -23,13 +24,14 @@ export function buildServer(options: ServerOptions = {}): FastifyInstance {
     new ProviderManager(options.providers ?? defaultProviders(), { timeoutMs: options.timeoutMs });
   const app = Fastify({ logger: false, trustProxy: true });
 
-  app.register(cors, { origin: true });
+  app.register(cors, { origin: true, credentials: true });
   app.register(healthRoutes);
   app.register(brandingRoutes);
   app.register(searchRoutes);
   app.register(recommendationsRoutes);
   app.register(streamRoutes, { manager });
   app.register(proxyRoutes);
+  app.register(adminRoutes, { manager });
 
   return app;
 }
