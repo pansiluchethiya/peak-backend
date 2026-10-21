@@ -46,10 +46,13 @@ describe('geolocation', () => {
   });
 
   it('falls back to unknown when the lookup fails', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => {
+    const fetchMock = vi.fn(async () => {
       throw new Error('offline');
-    }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
 
     await expect(geolocate('9.9.9.9')).resolves.toEqual({ country: 'unknown', city: 'unknown' });
+    await expect(geolocate('9.9.9.9')).resolves.toEqual({ country: 'unknown', city: 'unknown' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

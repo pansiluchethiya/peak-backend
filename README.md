@@ -7,7 +7,10 @@ One compose stack: Fastify + SQLite + Redis API, Next.js player, Next.js admin, 
 
 ```bash
 cp .env.example .env
-# Set ADMIN_PASSWORD, PROXY_SECRET, and optionally TMDB_API_KEY.
+# Required: generate strong values (the API refuses to start with placeholders).
+sed -i "s/^ADMIN_PASSWORD=.*/ADMIN_PASSWORD=$(openssl rand -hex 24)/" .env
+sed -i "s/^PROXY_SECRET=.*/PROXY_SECRET=$(openssl rand -hex 24)/" .env
+# Optional: add TMDB_API_KEY for search, recommendations, and titles.
 docker compose up -d --build
 ```
 

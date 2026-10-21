@@ -96,8 +96,8 @@ export interface SessionRecord {
   fpHash: string | null;
 }
 
-export function insertSession(record: SessionRecord): void {
-  getDb()
+export function insertSession(record: SessionRecord): number {
+  const result = getDb()
     .prepare(
       `INSERT INTO sessions
         (ts, tmdb_id, title, media_type, provider, quality, ip, country, city, device, browser, fp_hash)
@@ -117,9 +117,15 @@ export function insertSession(record: SessionRecord): void {
       record.browser,
       record.fpHash,
     );
+  return Number(result.lastInsertRowid);
 }
 
-export function recordProviderResult(id: string, ok: boolean): void {  getDb()
+export function updateSessionGeo(id: number, country: string, city: string): void {
+  getDb().prepare('UPDATE sessions SET country = ?, city = ? WHERE id = ?').run(country, city, id);
+}
+
+export function recordProviderResult(id: string, ok: boolean): void {
+  getDb()
     .prepare(
       `INSERT INTO providers (id, enabled, last_success, error_count) VALUES (?, 1, ?, ?)
        ON CONFLICT(id) DO UPDATE SET

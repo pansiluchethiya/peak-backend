@@ -32,7 +32,7 @@ export default function LoginPage() {
       <section className="relative hidden overflow-hidden border-r border-white/[0.06] lg:flex lg:flex-col lg:justify-between lg:p-12">
         <div className="absolute -left-24 top-1/4 h-[420px] w-[420px] rounded-full bg-indigo-500/15 blur-[120px]" />
         <div className="relative flex items-center gap-3">
-          <img src="/logo.svg" alt="" className="h-10 w-10 rounded-xl" />
+          <img src="/admin/logo.svg" alt="" className="h-10 w-10 rounded-xl" />
           <div>
             <p className="text-[15px] font-bold leading-tight">PeakMovies</p>
             <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-300/60">
@@ -66,7 +66,7 @@ export default function LoginPage() {
       <section className="flex items-center justify-center px-5 py-12">
         <div className="w-full max-w-[360px]">
           <div className="mb-8 flex items-center gap-3 lg:hidden">
-            <img src="/logo.svg" alt="" className="h-10 w-10 rounded-xl" />
+            <img src="/admin/logo.svg" alt="" className="h-10 w-10 rounded-xl" />
             <div>
               <p className="text-[15px] font-bold leading-tight">PeakMovies</p>
               <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-300/60">

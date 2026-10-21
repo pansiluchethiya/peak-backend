@@ -126,6 +126,25 @@ describe('admin providers', () => {
     });
   });
 
+  it('can test a disabled provider before re-enabling it', async () => {
+    await app.inject({
+      method: 'PATCH',
+      url: '/api/v1/admin/providers/fake',
+      headers: { cookie },
+      payload: { enabled: false },
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/test',
+      headers: { cookie },
+      payload: { tmdbId: '27205', type: 'movie', provider: 'fake' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().sources).toHaveLength(1);
+  });
+
   it('scopes a test scrape to one provider', async () => {
     const res = await app.inject({
       method: 'POST',
@@ -287,5 +306,12 @@ describe('admin settings', () => {
       payload: { password: 'new-secret' },
     });
     expect(newLogin.statusCode).toBe(200);
+
+    const oldSession = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/providers',
+      headers: { cookie },
+    });
+    expect(oldSession.statusCode).toBe(401);
   });
 });

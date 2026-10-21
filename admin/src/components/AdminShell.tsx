@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { cn } from '../lib/hooks';
+import { adminFetch } from '../lib/api';
 
 const NAV = [
   { href: '/', label: 'Dashboard', icon: 'grid' },
@@ -69,7 +70,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   async function logout() {
     setLoggingOut(true);
     try {
-      await fetch('/api/v1/admin/logout', { method: 'POST' });
+      await adminFetch<{ ok: boolean }>('/logout', { method: 'POST' });
     } finally {
       router.replace('/login');
     }
@@ -79,7 +80,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen">
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-[236px] flex-col border-r border-white/[0.07] bg-[#090b12]/90 px-4 py-5 backdrop-blur lg:flex">
         <Link href="/" className="mb-8 flex items-center gap-3 px-2">
-          <img src="/logo.svg" alt="" className="h-9 w-9 rounded-[10px]" />
+          <img src="/admin/logo.svg" alt="" className="h-9 w-9 rounded-[10px]" />
           <span className="flex flex-col leading-tight">
             <span className="text-[14px] font-bold tracking-tight">PeakMovies</span>
             <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-indigo-300/70">

@@ -11,13 +11,13 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - DB_PATH=/data/peakmovies.db
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-changeme}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
       - PUBLIC_URL=${PUBLIC_URL:-http://localhost:3000}
-      - PROXY_SECRET=${PROXY_SECRET:-dev-only-secret-change-me}
+      - PROXY_SECRET=${PROXY_SECRET:?set PROXY_SECRET in .env}
       - BRANDING_FILE=/config/branding.json
     volumes:
       - ./data:/data
-      - ./config:/config:ro
+      - ./config:/config
     depends_on:
       redis:
         condition: service_healthy

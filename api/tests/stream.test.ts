@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { buildServer } from '../src/index.js';
 import type { Provider } from '../src/providers/types.js';
 import { decodeProxyData } from '../src/services/proxyToken.js';
-import { getDb, resetDbForTests } from '../src/services/db.js';
+import { getDb, resetDbForTests, setProviderEnabled } from '../src/services/db.js';
 import { resetCacheForTests } from '../src/services/cache.js';
 
 const desktopUa =
@@ -138,12 +138,81 @@ describe('stream routes', () => {
 
     const first = await cacheApp.inject({ method: 'GET', url: '/api/v1/stream/movie/999' });
     const second = await cacheApp.inject({ method: 'GET', url: '/api/v1/stream/movie/999' });
-    const invalidated = await cacheApp.inject({ method: 'GET', url: '/api/v1/stream/movie/999?invalidate=1' });
 
     expect(first.json().meta.cacheHit).toBe(false);
     expect(second.json().meta.cacheHit).toBe(true);
+    const notInvalidated = await cacheApp.inject({ method: 'GET', url: '/api/v1/stream/movie/999?invalidate=0' });
+    expect(notInvalidated.json().meta.cacheHit).toBe(true);
+    const invalidated = await cacheApp.inject({ method: 'GET', url: '/api/v1/stream/movie/999?invalidate=1' });
+
     expect(invalidated.json().meta.cacheHit).toBe(false);
     expect(calls).toBe(2);
     await cacheApp.close();
+  });
+
+  it('coalesces concurrent cache misses into one scrape', async () => {
+    let calls = 0;
+    const slow: Provider = {
+      id: 'slow',
+      name: 'Slow',
+      async getSources() {
+        calls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return {
+          sources: [{ rawUrl: 'https://cdn.example/slow.m3u8', quality: '720p', codec: 'h264', headers: {} }],
+          subtitles: [],
+        };
+      },
+    };
+    const cacheApp = buildServer({ providers: [slow] });
+
+    const responses = await Promise.all(
+      [1, 2, 3].map(() => cacheApp.inject({ method: 'GET', url: '/api/v1/stream/movie/4242' })),
+    );
+
+    expect(responses.every((response) => response.statusCode === 200)).toBe(true);
+    expect(calls).toBe(1);
+    await cacheApp.close();
+  });
+
+  it('stops serving a provider after it is disabled', async () => {
+    const first = await app.inject({ method: 'GET', url: '/api/v1/stream/movie/31337' });
+    expect(first.json().sources).toHaveLength(1);
+
+    setProviderEnabled('fake', false);
+    const second = await app.inject({ method: 'GET', url: '/api/v1/stream/movie/31337' });
+
+    expect(second.json().sources).toEqual([]);
+    expect(second.json().meta.cacheHit).toBe(false);
+  });
+
+  it('does not block playback on geolocation', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise((resolve) => {
+      setTimeout(() => resolve(new Response(JSON.stringify({
+        status: 'success',
+        country: 'United States',
+        city: 'Mountain View',
+      }), { status: 200 })), 250);
+    })));
+
+    const started = Date.now();
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/stream/movie/88',
+      remoteAddress: '8.8.8.8',
+    });
+    const elapsed = Date.now() - started;
+
+    expect(res.statusCode).toBe(200);
+    expect(elapsed).toBeLessThan(200);
+    const initial = getDb().prepare('SELECT country FROM sessions WHERE tmdb_id = ?').get('88') as { country: string };
+    expect(initial.country).toBe('unknown');
+
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    const updated = getDb().prepare('SELECT country, city FROM sessions WHERE tmdb_id = ?').get('88') as {
+      country: string;
+      city: string;
+    };
+    expect(updated).toMatchObject({ country: 'United States', city: 'Mountain View' });
   });
 });

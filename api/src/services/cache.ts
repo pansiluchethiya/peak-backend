@@ -12,6 +12,8 @@ interface Entry {
   expiresAt: number;
 }
 
+const MAX_MEMORY_ENTRIES = 500;
+
 class CacheService {
   private readonly memory = new Map<string, Entry>();
   private hits = 0;
@@ -69,15 +71,25 @@ class CacheService {
 
   async set(key: string, value: unknown, ttlSeconds: number): Promise<void> {
     const expiresAt = Date.now() + ttlSeconds * 1000;
-    this.memory.set(key, { value, expiresAt });
 
     if (this.redis && this.backend === 'redis') {
       try {
         await this.redis.set(key, JSON.stringify(value), 'EX', Math.max(1, Math.ceil(ttlSeconds)));
+        return;
       } catch {
         this.downgradeToMemory();
       }
     }
+
+    for (const [cachedKey, entry] of this.memory) {
+      if (entry.expiresAt <= Date.now()) this.memory.delete(cachedKey);
+    }
+    while (this.memory.size >= MAX_MEMORY_ENTRIES) {
+      const oldest = this.memory.keys().next().value;
+      if (oldest === undefined) break;
+      this.memory.delete(oldest);
+    }
+    this.memory.set(key, { value, expiresAt });
   }
 
   async del(key: string): Promise<void> {
@@ -88,6 +100,16 @@ class CacheService {
       } catch {
         this.downgradeToMemory();
       }
+    }
+  }
+
+  async ping(): Promise<boolean> {
+    if (!this.redis || this.backend !== 'redis') return false;
+    try {
+      return (await this.redis.ping()) === 'PONG';
+    } catch {
+      this.downgradeToMemory();
+      return false;
     }
   }
 

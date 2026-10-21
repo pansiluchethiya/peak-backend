@@ -98,4 +98,31 @@ describe('ProviderManager', () => {
       errorCount: 1,
     });
   });
+
+  it('marks a zero-source provider failed even without a diagnostic', async () => {
+    const empty = makeProvider('empty', { sources: [], subtitles: [] });
+
+    const result = await new ProviderManager([empty]).getSources(media);
+
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ provider: 'empty', ok: false, error: 'no playable sources' }),
+    ]);
+    expect(listProviderStates().find((state) => state.id === 'empty')).toMatchObject({
+      errorCount: 1,
+    });
+  });
+
+  it('replaces a provider summary diagnostic instead of duplicating it', async () => {
+    const healthy = makeProvider('healthy', {
+      sources: [source('https://cdn/a.m3u8')],
+      subtitles: [],
+      diagnostics: [{ provider: 'healthy', ok: true, latencyMs: 3 }],
+    });
+
+    const result = await new ProviderManager([healthy]).getSources(media);
+
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ provider: 'healthy', ok: true }),
+    ]);
+  });
 });

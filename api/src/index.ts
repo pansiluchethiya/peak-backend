@@ -11,6 +11,8 @@ import { adminRoutes } from './routes/admin.js';
 import { ProviderManager } from './providers/index.js';
 import { defaultProviders } from './providers/registry.js';
 import type { Provider } from './providers/types.js';
+import { assertProductionConfig } from './config.js';
+import { isLocalAddress } from './services/geo.js';
 
 export interface ServerOptions {
   providers?: Provider[];
@@ -22,7 +24,10 @@ export function buildServer(options: ServerOptions = {}): FastifyInstance {
   const manager =
     options.manager ??
     new ProviderManager(options.providers ?? defaultProviders(), { timeoutMs: options.timeoutMs });
-  const app = Fastify({ logger: false, trustProxy: true });
+  const app = Fastify({
+    logger: false,
+    trustProxy: (address: string) => isLocalAddress(address),
+  });
 
   app.register(cors, { origin: true, credentials: true });
   app.register(healthRoutes);
@@ -38,10 +43,16 @@ export function buildServer(options: ServerOptions = {}): FastifyInstance {
 
 const entry = process.argv[1];
 if (entry && import.meta.url === pathToFileURL(entry).href) {
+  try {
+    assertProductionConfig();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  }
   const app = buildServer();
   const port = Number.parseInt(process.env.PORT ?? '3000', 10);
   app.listen({ port, host: '0.0.0.0' }).catch((error) => {
-    app.log.error(error);
+    console.error(error);
     process.exit(1);
   });
 }

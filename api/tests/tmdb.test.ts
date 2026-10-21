@@ -21,16 +21,21 @@ describe('tmdb', () => {
 
   it('normalizes movie search results', async () => {
     process.env.TMDB_API_KEY = 'test-key';
-    vi.stubGlobal('fetch', vi.fn(async () =>
+    const fetchMock = vi.fn(async () =>
       new Response(JSON.stringify({
         results: [{ id: 27205, title: 'Inception', release_date: '2010-07-16', poster_path: '/inc.jpg' }],
       }), { status: 200 }),
-    ));
+    );
+    vi.stubGlobal('fetch', fetchMock);
 
     const results = await tmdbSearch('inception-unique-1', 'movie');
     expect(results).toEqual([
       { tmdbId: '27205', type: 'movie', title: 'Inception', year: 2010, posterPath: '/inc.jpg' },
     ]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it('normalizes tv search results', async () => {

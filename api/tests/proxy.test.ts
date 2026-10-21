@@ -130,4 +130,54 @@ describe('proxy route', () => {
     });
     expect(res.statusCode).toBe(502);
   });
+
+  it('blocks redirects into private networks', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(null, { status: 302, headers: { location: 'http://127.0.0.1:6379/' } }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: proxyToken({ url: 'https://cdn.example/a.m3u8' }),
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects upstream HTML instead of reflecting it on the API origin', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response('<html><script>alert(1)</script></html>', {
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+      }),
+    ));
+
+    const res = await app.inject({
+      method: 'GET',
+      url: proxyToken({ url: 'https://cdn.example/segment.ts' }),
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body).not.toContain('<script>');
+  });
+
+  it('labels playlists correctly even when upstream sends a generic type', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response('#EXTM3U\n#EXTINF:1,\nseg.ts\n', {
+        status: 200,
+        headers: { 'content-type': 'text/plain' },
+      }),
+    ));
+
+    const res = await app.inject({
+      method: 'GET',
+      url: proxyToken({ url: 'https://cdn.example/playlist' }),
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('application/vnd.apple.mpegurl');
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+  });
 });

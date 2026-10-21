@@ -179,7 +179,7 @@ export async function adminRoutes(app: FastifyInstance, options: AdminOptions): 
       episode: typeof body.episode === 'number' ? body.episode : undefined,
     };
     const started = Date.now();
-    const result = await target.getSources(media);
+    const result = await target.getSources(media, { includeDisabled: true });
     return {
       ...result,
       latencyMs: Date.now() - started,

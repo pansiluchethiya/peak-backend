@@ -33,9 +33,14 @@ export class ProviderManager {
     return [...this.providers];
   }
 
-  async getSources(media: MediaRef): Promise<AggregatedResult> {
+  async getSources(
+    media: MediaRef,
+    options: { includeDisabled?: boolean } = {},
+  ): Promise<AggregatedResult> {
     const active = this.providers.filter(
-      (provider) => provider.enabled !== false && isProviderEnabled(provider.id),
+      (provider) =>
+        provider.enabled !== false &&
+        (options.includeDisabled === true || isProviderEnabled(provider.id)),
     );
     const timeoutMs = this.options.timeoutMs ?? 12000;
 
@@ -44,9 +49,10 @@ export class ProviderManager {
         const started = Date.now();
         try {
           const result = await withTimeout(provider.getSources(media), timeoutMs);
-          const reportedFailure = (result.diagnostics ?? []).find((diagnostic) => !diagnostic.ok);
-          const ok = result.sources.length > 0 || !reportedFailure;
+          const ok = result.sources.length > 0;
           recordProviderResult(provider.id, ok);
+          const reported = result.diagnostics ?? [];
+          const reportedFailure = reported.find((diagnostic) => !diagnostic.ok);
           return {
             provider,
             result,
@@ -90,6 +96,15 @@ export class ProviderManager {
       }
     }
 
-    return { sources, subtitles, diagnostics: outcomes.flatMap((outcome) => [outcome.diagnostic, ...(outcome.result?.diagnostics ?? [])]) };
+    return {
+      sources,
+      subtitles,
+      diagnostics: outcomes.flatMap((outcome) => [
+        outcome.diagnostic,
+        ...(outcome.result?.diagnostics ?? []).filter(
+          (diagnostic) => diagnostic.provider !== outcome.provider.id,
+        ),
+      ]),
+    };
   }
 }

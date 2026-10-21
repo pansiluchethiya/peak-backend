@@ -4,6 +4,7 @@ import type { MediaRef, MediaType } from '../providers/types.js';
 import { tmdbTitle } from '../services/tmdb.js';
 import { encodeProxyData } from '../services/proxyToken.js';
 import { getCache } from '../services/cache.js';
+import { listProviderStates } from '../services/db.js';
 import { trackStream, type FingerprintQuery } from '../middleware/tracker.js';
 import type { AggregatedResult } from '../providers/types.js';
 
@@ -20,8 +21,34 @@ interface StreamQuery extends FingerprintQuery {
   invalidate?: string;
 }
 
+const inFlight = new Map<string, Promise<AggregatedResult>>();
+
 function cacheKey(media: MediaRef): string {
-  return `stream:${media.type}:${media.tmdbId}:${media.season ?? 0}:${media.episode ?? 0}`;
+  const disabled = listProviderStates()
+    .filter((provider) => !provider.enabled)
+    .map((provider) => provider.id)
+    .sort()
+    .join(',');
+  return `stream:${media.type}:${media.tmdbId}:${media.season ?? 0}:${media.episode ?? 0}:${disabled}`;
+}
+
+async function aggregate(
+  manager: ProviderManager,
+  media: MediaRef,
+  key: string,
+): Promise<AggregatedResult> {
+  const pending = inFlight.get(key);
+  if (pending) return pending;
+
+  const promise = manager
+    .getSources(media)
+    .then(async (result) => {
+      await getCache().set(key, result, 3600);
+      return result;
+    })
+    .finally(() => inFlight.delete(key));
+  inFlight.set(key, promise);
+  return promise;
 }
 
 function proxyUrl(rawUrl: string, headers?: Record<string, string>): string {
@@ -39,14 +66,13 @@ async function handleStream(
   const key = cacheKey(media);
   let cacheHit = false;
 
-  if (fingerprint.invalidate) await cache.del(key);
+  if (fingerprint.invalidate === '1') await cache.del(key);
 
   let aggregated = await cache.get<AggregatedResult>(key);
   if (aggregated) {
     cacheHit = true;
   } else {
-    aggregated = await manager.getSources(media);
-    await cache.set(key, aggregated, 3600);
+    aggregated = await aggregate(manager, media, key);
   }
 
   let title = fingerprint.title?.trim() || media.title?.trim() || `TMDB ${media.tmdbId}`;

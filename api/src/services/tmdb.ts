@@ -47,7 +47,9 @@ async function request<T>(path: string, params: Record<string, string> = {}): Pr
   url.searchParams.set('api_key', key);
   for (const [name, value] of Object.entries(params)) url.searchParams.set(name, value);
 
-  const res = await fetch(url.toString());
+  const res = await fetch(url.toString(), {
+    signal: AbortSignal.timeout(3000),
+  });
   if (!res.ok) throw new Error(`TMDB request failed (${res.status})`);
   return (await res.json()) as T;
 }

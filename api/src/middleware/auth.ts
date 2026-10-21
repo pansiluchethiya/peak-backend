@@ -24,6 +24,11 @@ function signingSecret(): string {
   return createHash('sha256').update(`${password}:${proxySecret}`).digest('hex');
 }
 
+function passwordVersion(): string {
+  const material = storedPassword() ?? process.env.ADMIN_PASSWORD ?? '';
+  return createHash('sha256').update(material).digest('hex').slice(0, 16);
+}
+
 export function adminPasswordConfigured(): boolean {
   return Boolean(process.env.ADMIN_PASSWORD) || storedPassword() !== null;
 }
@@ -58,13 +63,20 @@ export function changeAdminPassword(nextPassword: string): void {
 }
 
 export function signAdminToken(): string {
-  return jwt.sign({ role: 'admin' }, signingSecret(), { expiresIn: TOKEN_TTL_SECONDS });
+  return jwt.sign({ role: 'admin', v: passwordVersion() }, signingSecret(), {
+    expiresIn: TOKEN_TTL_SECONDS,
+  });
 }
 
 export function verifyAdminToken(token: string): boolean {
   try {
     const payload = jwt.verify(token, signingSecret());
-    return typeof payload === 'object' && payload !== null && payload.role === 'admin';
+    return (
+      typeof payload === 'object' &&
+      payload !== null &&
+      payload.role === 'admin' &&
+      payload.v === passwordVersion()
+    );
   } catch {
     return false;
   }

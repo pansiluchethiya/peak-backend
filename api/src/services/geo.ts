@@ -26,6 +26,10 @@ function isPrivate(ip: string): boolean {
   );
 }
 
+export function isLocalAddress(ip: string): boolean {
+  return isPrivate(ip);
+}
+
 export async function geolocate(ip: string): Promise<GeoResult> {
   if (isPrivate(ip)) return LOCAL;
 
@@ -46,6 +50,7 @@ export async function geolocate(ip: string): Promise<GeoResult> {
     cache.set(ip, { expiresAt: Date.now() + CACHE_TTL_MS, value });
     return value;
   } catch {
+    cache.set(ip, { expiresAt: Date.now() + CACHE_TTL_MS, value: UNKNOWN });
     return UNKNOWN;
   }
 }
