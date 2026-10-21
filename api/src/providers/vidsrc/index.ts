@@ -6,6 +6,7 @@ import type {
   RawSource,
   RawSubtitle,
 } from '../types.js';
+import { readBuffer, readJson, readText } from '../../services/safeHttp.js';
 
 const DOMAINS = [
   'vidsrc.sh',
@@ -121,16 +122,19 @@ function dedupeSubtitles(subtitles: RawSubtitle[]): RawSubtitle[] {
 }
 
 async function fetchText(url: string, referer?: string): Promise<string> {
-  const res = await fetch(url, {
+  const response = await readText(url, {
     headers: {
       'User-Agent': USER_AGENT,
       Accept: 'text/html,application/xhtml+xml,application/json',
       ...(referer ? { Referer: referer } : {}),
     },
-    signal: AbortSignal.timeout(DOMAIN_TIMEOUT_MS),
+    timeoutMs: DOMAIN_TIMEOUT_MS,
+    maxBytes: 4 * 1024 * 1024,
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.text();
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.text;
 }
 
 function extractWindowJson(html: string, name: string): Record<string, unknown> | undefined {
@@ -194,14 +198,20 @@ async function decryptStreamUrls(
 ): Promise<string[]> {
   let bytes: BufferSource;
   if (typeof vs.wasm_url === 'string') {
-    const res = await fetch(vs.wasm_url, {
+    const response = await readBuffer(vs.wasm_url, {
       headers: { 'User-Agent': USER_AGENT },
-      signal: AbortSignal.timeout(DOMAIN_TIMEOUT_MS),
+      timeoutMs: DOMAIN_TIMEOUT_MS,
+      maxBytes: 2 * 1024 * 1024,
     });
-    if (!res.ok) throw new Error(`decryptor HTTP ${res.status}`);
-    bytes = await res.arrayBuffer();
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`decryptor HTTP ${response.status}`);
+    }
+    if (response.buffer.subarray(0, 4).toString('binary') !== '\0asm') {
+      throw new Error('decryptor was not a wasm module');
+    }
+    bytes = response.buffer as unknown as BufferSource;
   } else if (typeof vs.wasm === 'string') {
-    bytes = Buffer.from(vs.wasm, 'base64');
+    bytes = Buffer.from(vs.wasm, 'base64') as unknown as BufferSource;
   } else {
     throw new Error('encrypted sources without a decryptor');
   }
@@ -220,12 +230,14 @@ async function resolveNestedSources(embedHtml: string, embed: string): Promise<R
   const apiPath = /data-api=["']([^"']+)["']/i.exec(embedHtml)?.[1];
   if (!apiPath) return { sources: [], subtitles: [] };
 
-  const sourceResponse = await fetch(new URL(decodeHtml(apiPath), embed), {
+  const sourceResponse = await readJson<{ src?: unknown }>(new URL(decodeHtml(apiPath), embed), {
     headers: { 'User-Agent': USER_AGENT, Accept: 'application/json', Referer: embed },
-    signal: AbortSignal.timeout(DOMAIN_TIMEOUT_MS),
+    timeoutMs: DOMAIN_TIMEOUT_MS,
   });
-  if (!sourceResponse.ok) throw new Error(`source API HTTP ${sourceResponse.status}`);
-  const sourceJson = (await sourceResponse.json()) as { src?: unknown };
+  if (sourceResponse.status < 200 || sourceResponse.status >= 300) {
+    throw new Error(`source API HTTP ${sourceResponse.status}`);
+  }
+  const sourceJson = sourceResponse.data;
   if (typeof sourceJson.src !== 'string') throw new Error('source API returned no nested player');
 
   const nestedUrl = new URL(sourceJson.src, embed).toString();
@@ -238,23 +250,26 @@ async function resolveNestedSources(embedHtml: string, embed: string): Promise<R
   const config = extractWindowJson(playerHtml, 'window.CONFIG') ?? extractWindowJson(nestedHtml, 'window.CONFIG');
   if (!config || typeof config.api !== 'string') throw new Error('player config has no stream API');
 
-  const api = new URL(config.api);
+  const api = new URL(config.api, playerUrl);
   if (typeof config.apiToken === 'string' && config.apiToken) {
     api.searchParams.set('api_token', config.apiToken);
   }
-  const streamResponse = await fetch(api, {
+  const streamResponse = await readJson<{
+    data?: { stream_urls?: unknown };
+    vs?: { wasm_url?: unknown; wasm?: unknown };
+  }>(api, {
     headers: {
       'User-Agent': USER_AGENT,
       Accept: 'application/json',
       Referer: `${new URL(nestedUrl).origin}/`,
     },
-    signal: AbortSignal.timeout(DOMAIN_TIMEOUT_MS),
+    timeoutMs: DOMAIN_TIMEOUT_MS,
+    maxBytes: 4 * 1024 * 1024,
   });
-  if (!streamResponse.ok) throw new Error(`stream API HTTP ${streamResponse.status}`);
-  const payload = (await streamResponse.json()) as {
-    data?: { stream_urls?: unknown };
-    vs?: { wasm_url?: unknown; wasm?: unknown };
-  };
+  if (streamResponse.status < 200 || streamResponse.status >= 300) {
+    throw new Error(`stream API HTTP ${streamResponse.status}`);
+  }
+  const payload = streamResponse.data;
   const encoded = payload.data?.stream_urls;
   const streamUrls = Array.isArray(encoded)
     ? encoded.filter((value): value is string => typeof value === 'string')
@@ -288,6 +303,9 @@ async function resolveNestedSources(embedHtml: string, embed: string): Promise<R
 
       const masterUrl = withPlayToken(candidate, token);
       const master = await fetchText(masterUrl, `${origin}/`);
+      if (!master.trimStart().startsWith('#EXTM3U')) {
+        throw new Error('master playlist was invalid');
+      }
       const variants = parseMasterPlaylist(master, masterUrl, headers, token);
       if (variants.length > 0) return { sources: variants, subtitles };
       return {
@@ -334,7 +352,10 @@ async function scrapeDomain(domain: string, media: MediaRef): Promise<DomainOutc
         provider: `vidsrc:${domain}`,
         ok: false,
         latencyMs: Date.now() - started,
-        error: error instanceof Error ? error.message : String(error),
+        error:
+          error instanceof Error
+            ? error.message || error.name || 'provider request failed'
+            : String(error),
       },
     };
   }

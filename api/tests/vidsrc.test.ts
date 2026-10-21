@@ -2,13 +2,85 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { vidsrcProvider } from '../src/providers/vidsrc/index.js';
 import { resetDbForTests } from '../src/services/db.js';
 
+const http = vi.hoisted(() => ({
+  readText: vi.fn(),
+  readJson: vi.fn(),
+  readBuffer: vi.fn(),
+}));
+
+vi.mock('../src/services/safeHttp.js', () => ({
+  readText: http.readText,
+  readJson: http.readJson,
+  readBuffer: http.readBuffer,
+}));
+
 function page(sourceUrl: string, extra = ''): string {
   return `<html><body><script>var player={file:"${sourceUrl}",type:"hls"};</script>${extra}</body></html>`;
+}
+
+function textResponse(text: string, url: string, status = 200) {
+  return { text, status, headers: {}, url: new URL(url) };
+}
+
+function jsonResponse<T>(data: T, url: string, status = 200) {
+  return { data, status, url: new URL(url) };
+}
+
+function chainForVidsrcSh(requested: string[]) {
+  http.readText.mockImplementation(async (input: string | URL) => {
+    const url = String(input);
+    requested.push(url);
+    if (url === 'https://vidsrc.sh/embed/movie/27205') {
+      return textResponse('<div data-api="/vs_src.php?type=movie&amp;id=27205"></div>', url);
+    }
+    if (url === 'https://nested.test/embed/movie/27205?vs=abc') {
+      return textResponse(
+        '<script>window.CFG = {"playerUrl":"/embed/player/movie/27205?vs=abc"};</script>',
+        url,
+      );
+    }
+    if (url === 'https://nested.test/embed/player/movie/27205?vs=abc') {
+      return textResponse(
+        '<script>window.CONFIG = {"api":"https://data.test/api.php?type=movie&tmdb=27205&stream_urls","apiToken":"single-use"};</script>',
+        url,
+      );
+    }
+    if (url === 'https://stream.test/generate.php') return textResponse('play-token', url);
+    if (url === 'https://stream.test/master.m3u8?token=play-token') {
+      return textResponse(
+        [
+          '#EXTM3U',
+          '#EXT-X-STREAM-INF:BANDWIDTH=2384282,CODECS="mp4a.40.2,avc1.64001f",RESOLUTION=1280x534',
+          '/pl/abc/720/index.m3u8',
+          '#EXT-X-STREAM-INF:BANDWIDTH=4406071,CODECS="mp4a.40.2,avc1.640028",RESOLUTION=1920x800',
+          '/pl/abc/1080/index.m3u8',
+        ].join('\n'),
+        url,
+      );
+    }
+    throw new Error(`unexpected text request ${url}`);
+  });
+
+  http.readJson.mockImplementation(async (input: string | URL) => {
+    const url = String(input);
+    requested.push(url);
+    if (url.startsWith('https://vidsrc.sh/vs_src.php')) {
+      return jsonResponse({ src: 'https://nested.test/embed/movie/27205?vs=abc' }, url);
+    }
+    if (url.includes('data.test/api.php')) {
+      expect(url).toContain('api_token=single-use');
+      return jsonResponse({ data: { stream_urls: ['https://stream.test/master.m3u8'] } }, url);
+    }
+    throw new Error(`unexpected json request ${url}`);
+  });
 }
 
 beforeEach(() => {
   process.env.DB_PATH = ':memory:';
   resetDbForTests();
+  http.readText.mockReset();
+  http.readJson.mockReset();
+  http.readBuffer.mockReset();
 });
 
 afterEach(() => {
@@ -18,26 +90,27 @@ afterEach(() => {
 describe('vidsrc provider', () => {
   it('aggregates all working domains, dedupes, and reports per-domain diagnostics', async () => {
     const requested: string[] = [];
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    http.readText.mockImplementation(async (input: string | URL) => {
       const url = String(input);
       requested.push(url);
       if (url.includes('vidsrc.sh')) {
-        return new Response(page('https://cdn.example/1080p/a.m3u8'), { status: 200 });
+        return textResponse(page('https://cdn.example/1080p/a.m3u8'), url);
       }
       if (url.includes('vidsrc2.ru')) throw new Error('connect ETIMEDOUT');
       if (url.includes('vidsrc.ir')) {
-        return new Response(
+        return textResponse(
           page(
             'https://cdn.example/b.m3u8',
             '<track src="https://cdn.example/sub.vtt" srclang="en" label="English">',
           ),
-          { status: 200 },
+          url,
         );
       }
-      if (url.includes('vidsrc.io')) return new Response('<html>no source here</html>', { status: 200 });
-      if (url.includes('vidsrc.tw')) return new Response('forbidden', { status: 403 });
-      return new Response('error', { status: 500 });
-    }));
+      if (url.includes('vidsrc.io')) return textResponse('<html>no source here</html>', url);
+      if (url.includes('vidsrc.tw')) return textResponse('forbidden', url, 403);
+      return textResponse('error', url, 500);
+    });
+    http.readJson.mockRejectedValue(new Error('no nested api'));
 
     const result = await vidsrcProvider.getSources({ tmdbId: '27205', type: 'movie' });
 
@@ -67,46 +140,16 @@ describe('vidsrc provider', () => {
 
   it('follows the nested player, token, and master playlist flow', async () => {
     const requested: string[] = [];
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    chainForVidsrcSh(requested);
+    // Non-vidsrc.sh domains are unavailable in this scenario.
+    const original = http.readText.getMockImplementation()!;
+    http.readText.mockImplementation(async (input: string | URL) => {
       const url = String(input);
-      requested.push(url);
-      if (url === 'https://vidsrc.sh/embed/movie/27205') {
-        return new Response('<div data-api="/vs_src.php?type=movie&amp;id=27205"></div>', { status: 200 });
+      if (!url.includes('vidsrc.sh') && !url.includes('nested.test') && !url.includes('stream.test')) {
+        throw new Error('domain down');
       }
-      if (url.startsWith('https://vidsrc.sh/vs_src.php')) {
-        return Response.json({ src: 'https://nested.test/embed/movie/27205?vs=abc' });
-      }
-      if (url === 'https://nested.test/embed/movie/27205?vs=abc') {
-        return new Response('<script>window.CFG = {"playerUrl":"/embed/player/movie/27205?vs=abc"};</script>', { status: 200 });
-      }
-      if (url === 'https://nested.test/embed/player/movie/27205?vs=abc') {
-        return new Response(
-          '<script>window.CONFIG = {"api":"https://data.test/api.php?type=movie&tmdb=27205&stream_urls","apiToken":"single-use"};</script>',
-          { status: 200 },
-        );
-      }
-      if (url.includes('data.test/api.php')) {
-        expect(url).toContain('api_token=single-use');
-        return Response.json({ data: { stream_urls: ['https://stream.test/master.m3u8'] } });
-      }
-      if (url === 'https://stream.test/generate.php') {
-        return new Response('play-token', { status: 200 });
-      }
-      if (url === 'https://stream.test/master.m3u8?token=play-token') {
-        return new Response(
-          [
-            '#EXTM3U',
-            '#EXT-X-STREAM-INF:BANDWIDTH=2384282,CODECS="mp4a.40.2,avc1.64001f",RESOLUTION=1280x534',
-            '/pl/abc/720/index.m3u8',
-            '#EXT-X-STREAM-INF:BANDWIDTH=4406071,CODECS="mp4a.40.2,avc1.640028",RESOLUTION=1920x800',
-            '/pl/abc/1080/index.m3u8',
-          ].join('\n'),
-          { status: 200 },
-        );
-      }
-      if (url.includes('vidsrc.sh')) return new Response('ok', { status: 200 });
-      return new Response('down', { status: 500 });
-    }));
+      return original(input);
+    });
 
     const result = await vidsrcProvider.getSources({ tmdbId: '27205', type: 'movie' });
 
@@ -128,12 +171,91 @@ describe('vidsrc provider', () => {
     ).toBe(true);
   });
 
+  it('rejects a 200 HTML page where the master playlist should be', async () => {
+    http.readText.mockImplementation(async (input: string | URL) => {
+      const url = String(input);
+      if (url === 'https://vidsrc.sh/embed/movie/27205') {
+        return textResponse('<div data-api="/vs_src.php?type=movie&amp;id=27205"></div>', url);
+      }
+      if (url === 'https://nested.test/embed/movie/27205?vs=abc') {
+        return textResponse('<script>window.CFG = {"playerUrl":"/player"};</script>', url);
+      }
+      if (url === 'https://nested.test/player') {
+        return textResponse(
+          '<script>window.CONFIG = {"api":"https://data.test/api.php","apiToken":"x"};</script>',
+          url,
+        );
+      }
+      if (url === 'https://stream.test/generate.php') return textResponse('play-token', url);
+      if (url.startsWith('https://stream.test/master.m3u8')) {
+        return textResponse('<html><body>challenge required</body></html>', url);
+      }
+      throw new Error('domain down');
+    });
+    http.readJson.mockImplementation(async (input: string | URL) => {
+      const url = String(input);
+      if (url.startsWith('https://vidsrc.sh/vs_src.php')) {
+        return jsonResponse({ src: 'https://nested.test/embed/movie/27205?vs=abc' }, url);
+      }
+      if (url.startsWith('https://data.test/api.php')) {
+        return jsonResponse({ data: { stream_urls: ['https://stream.test/master.m3u8'] } }, url);
+      }
+      throw new Error('unexpected json');
+    });
+
+    const result = await vidsrcProvider.getSources({ tmdbId: '27205', type: 'movie' });
+
+    expect(result.sources).toEqual([]);
+    expect(result.diagnostics?.find((d) => d.provider === 'vidsrc:vidsrc.sh')).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/master playlist was invalid/i),
+    });
+  });
+
+  it('reports encrypted sources without a decryptor instead of treating them as playable', async () => {
+    http.readText.mockImplementation(async (input: string | URL) => {
+      const url = String(input);
+      if (url === 'https://vidsrc.sh/embed/movie/27205') {
+        return textResponse('<div data-api="/vs_src.php?type=movie&amp;id=27205"></div>', url);
+      }
+      if (url === 'https://nested.test/embed/movie/27205?vs=abc') {
+        return textResponse('<script>window.CFG = {"playerUrl":"/player"};</script>', url);
+      }
+      if (url === 'https://nested.test/player') {
+        return textResponse(
+          '<script>window.CONFIG = {"api":"https://data.test/api.php","apiToken":"x"};</script>',
+          url,
+        );
+      }
+      throw new Error('domain down');
+    });
+    http.readJson.mockImplementation(async (input: string | URL) => {
+      const url = String(input);
+      if (url.startsWith('https://vidsrc.sh/vs_src.php')) {
+        return jsonResponse({ src: 'https://nested.test/embed/movie/27205?vs=abc' }, url);
+      }
+      if (url.startsWith('https://data.test/api.php')) {
+        return jsonResponse({ data: { stream_urls: 'ENCRYPTED' } }, url);
+      }
+      throw new Error('unexpected json');
+    });
+
+    const result = await vidsrcProvider.getSources({ tmdbId: '27205', type: 'movie' });
+
+    expect(result.sources).toEqual([]);
+    expect(result.diagnostics?.find((d) => d.provider === 'vidsrc:vidsrc.sh')).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/decryptor/i),
+    });
+  });
+
   it('builds the tv embed URL with season and episode', async () => {
     const requested: string[] = [];
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    http.readText.mockImplementation(async (input: string | URL) => {
       requested.push(String(input));
-      return new Response('<html></html>', { status: 200 });
-    }));
+      return textResponse('<html></html>', String(input));
+    });
+    http.readJson.mockRejectedValue(new Error('no nested api'));
 
     await vidsrcProvider.getSources({ tmdbId: '1396', type: 'tv', season: 1, episode: 2 });
 
