@@ -3,10 +3,11 @@ services:
     build: ./api
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${API_PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
       - TMDB_API_KEY=${TMDB_API_KEY:-}
+      - VIDAPI_BASE_URL=${VIDAPI_BASE_URL:-}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - DB_PATH=/data/peakmovies.db
@@ -19,28 +20,52 @@ services:
       - ./config:/config:ro
     depends_on:
       redis:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   player:
     build: ./player
     restart: unless-stopped
+    ports:
+      - "${PLAYER_PORT:-3001}:3001"
     environment:
       - API_URL=http://api:3000
-      - PUBLIC_API_URL=${PUBLIC_URL:-http://localhost:3000}
+      - PUBLIC_API_URL=${PUBLIC_API_URL:-}
       - BRANDING_FILE=/config/branding.json
     volumes:
       - ./config:/config:ro
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3001/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   admin:
     build: ./admin
     restart: unless-stopped
+    ports:
+      - "${ADMIN_PORT:-3002}:3002"
     environment:
       - API_URL=http://api:3000
-      - PUBLIC_API_URL=${PUBLIC_URL:-http://localhost:3000}
+      - PUBLIC_API_URL=${PUBLIC_API_URL:-}
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3002/admin/login"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   redis:
     image: redis:7-alpine
@@ -48,16 +73,24 @@ services:
     volumes:
       - ./data/redis:/data
     command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
 
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
     profiles: ["proxy"]
     ports:
-      - "80:80"
+      - "${PROXY_PORT:-80}:80"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
-      - api
-      - player
-      - admin
+      api:
+        condition: service_healthy
+      player:
+        condition: service_healthy
+      admin:
+        condition: service_healthy
