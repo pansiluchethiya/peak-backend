@@ -133,13 +133,15 @@ function card(m, type){
     '<div class="meta"><div class="t">'+esc(title)+'</div><div class="s">'+esc(year||'')+'</div></div></div>';
 }
 async function loadHome(){
-  app.innerHTML = '<div class="hero" style="background-image:url(https://image.tmdb.org/t/p/original/5a4JdoFwjlKN34hlMPREoL9Ll1O.jpg)"><div><h2>Welcome to Peak Movies</h2><p>Stream movies, TV shows and live channels. Search anything above.</p><button onclick="document.querySelector(\'[data-route=movies]\').click()">Browse Movies</button></div></div>'+
+  app.innerHTML = '<div class="hero" style="background-image:url(https://image.tmdb.org/t/p/original/5a4JdoFwjlKN34hlMPREoL9Ll1O.jpg)"><div><h2>Welcome to Peak Movies</h2><p>Stream movies, TV shows and live channels. Search anything above.</p><button class="hero-cta" data-route="movies">Browse Movies</button></div></div>'+
     '<div class="section"><h3>Trending <span>popular right now</span></h3><div class="grid" id="trend"><div class="empty"><span class="spinner"></span></div></div></div>';
+  const demos = [{tmdbId:'550',title:'Fight Club',year:1999,poster_path:'/pB8BM7pdSp6B6Ih7QZ4DrQ3PmJK.jpg'},{tmdbId:'27205',title:'Inception',year:2010,poster_path:'/oYuLEt3zVCKq57qu2F8dT7NIa6f.jpg'},{tmdbId:'1396',title:'Breaking Bad',year:2008,poster_path:'/ztkUQFLlC19CCMYlyoRPqft16a.jpg'},{tmdbId:'155',title:'The Dark Knight',year:2008,poster_path:'/qJ2tW6WMUDux911r6m7haRef0WH.jpg'}];
   try {
     const d = await api('/search?q=batman&type=movie');
-    document.getElementById('trend').innerHTML = (d.results||[]).slice(0,12).map(m=>card(m,'movie')).join('') || '<div class="empty">No results</div>';
+    const items = (d.results||[]).slice(0,12);
+    document.getElementById('trend').innerHTML = (items.length?items:demos).map(m=>card(m,'movie')).join('');
     bindCards();
-  } catch(e){ document.getElementById('trend').innerHTML = '<div class="empty">'+esc(e.message)+'</div>'; }
+  } catch(e){ document.getElementById('trend').innerHTML = demos.map(m=>card(m,'movie')).join(''); bindCards(); }
 }
 async function loadSearch(q, type){
   app.innerHTML = '<div class="section"><h3>Results for "'+esc(q)+'"</h3><div class="grid" id="res"><div class="empty"><span class="spinner"></span></div></div></div>';
@@ -148,7 +150,7 @@ async function loadSearch(q, type){
     const items = d.results||[];
     document.getElementById('res').innerHTML = items.map(m=>card(m,type)).join('') || '<div class="empty">No results</div>';
     bindCards();
-  } catch(e){ document.getElementById('res').innerHTML = '<div class="empty">'+esc(e.message)+'</div>'; }
+  } catch(e){ document.getElementById('res').innerHTML = '<div class="empty">'+esc(e.message)+' (TMDB key not configured)</div>'; }
 }
 async function loadDetail(id, type){
   app.innerHTML = '<div class="empty"><span class="spinner"></span> Loading…</div>';
@@ -183,11 +185,12 @@ async function loadDetail(id, type){
       list.querySelectorAll('.src-row').forEach((r,i)=> r.onclick = ()=> openPlayer(d.media.title||'title', d.sources[i]));
       if(d.sources && d.sources[0]) openPlayer(d.media.title||'title', d.sources[0]);
       setStatus2('Playing');
-    } catch(e){ setStatus2('Error: '+e.message); }
+    } catch(e){ setStatus2('Error: '+ (e && e.message)); }
   };
   document.getElementById('metaBtn').onclick = () => loadDetail(id,type);
 }
 function setStatus2(t){ const e=document.querySelector('.status'); if(e) e.textContent=t; }
+app.addEventListener('click', (e)=>{ const b=e.target.closest('.hero-cta'); if(b){ const r=b.getAttribute('data-route'); if(r) navigate(r); } });
 function bindCards(){
   app.querySelectorAll('.card').forEach(c=>{
     c.onclick = () => {
@@ -222,7 +225,7 @@ async function loadLive(group){
         if(!s){ setStatus2('No source'); return; }
         openPlayer(dd.media.title || c.textContent, s);
         setStatus2('Playing');
-      } catch(e){ setStatus2('Error: '+e.message); }
+      } catch(e){ setStatus2('Error: '+ (e && e.message)); }
     });
   }
   renderGroups(); renderChannels();
