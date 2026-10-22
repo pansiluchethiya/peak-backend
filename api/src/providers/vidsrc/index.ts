@@ -372,6 +372,7 @@ async function scrapeDomain(domain: string, media: MediaRef): Promise<DomainOutc
 export const vidsrcProvider: Provider = {
   id: 'vidsrc',
   name: 'VidSrc',
+  description: 'Multi-domain HLS scraper (six mirrors)',
   enabled: true,
   async getSources(media: MediaRef): Promise<ProviderResult> {
     const outcomes = await Promise.all(DOMAINS.map((domain) => scrapeDomain(domain, media)));

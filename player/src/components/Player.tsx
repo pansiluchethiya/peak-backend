@@ -3,7 +3,8 @@
 import Hls from 'hls.js';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
-import { fetchBranding, fetchStream } from '../lib/api';
+import { fetchBranding, fetchProviders, fetchStream } from '../lib/api';
+import { fetchProviderChain, setProviderCatalogue } from '../lib/provider';
 import { getFingerprint } from '../lib/fingerprint';
 import {
   autoQualityCap,
@@ -98,6 +99,7 @@ export function Player({ apiBase, media }: Props) {
   speedRef.current = speed;
 
   const source = payload?.sources[sourceIndex];
+  const isEmbedSource = source?.codec === 'html5';
 
   // Auto-hide controls helper
   const resetInactivityTimer = useCallback(() => {
@@ -132,6 +134,9 @@ export function Player({ apiBase, media }: Props) {
   useEffect(() => {
     const controller = new AbortController();
     fetchBranding(apiBase, controller.signal).then(setBranding).catch(() => undefined);
+    fetchProviders(apiBase, controller.signal)
+      .then((providers) => setProviderCatalogue(providers))
+      .catch(() => undefined);
     return () => controller.abort();
   }, [apiBase]);
 
@@ -166,8 +171,22 @@ export function Player({ apiBase, media }: Props) {
         }
       } catch (reason) {
         if (controller.signal.aborted) return;
-        setStatus('error');
-        setError(reason instanceof Error ? reason.message : 'Could not load the stream.');
+        // Fall back to the next provider in the configured order.
+        try {
+          const fallback = await fetchProviderChain(media);
+          if (controller.signal.aborted) return;
+          setPayload(fallback);
+          setSourceIndex(0);
+        } catch (fallbackErr) {
+          setStatus('error');
+          setError(
+            reason instanceof Error
+              ? reason.message
+              : fallbackErr instanceof Error
+                ? fallbackErr.message
+                : 'Could not load the stream.',
+          );
+        }
       }
     })();
 
@@ -197,6 +216,14 @@ export function Player({ apiBase, media }: Props) {
     setSelectedLevel(null);
     setCurrentAutoLevel(null);
     setBufferedRanges([]);
+
+    // Embed sources are played inside an iframe by the browser, there is no
+    // playlist for hls.js to load.
+    if (isEmbedSource) {
+      setStatus('ready');
+      return;
+    }
+
     let hls: Hls | null = null;
     let ready = false;
 
@@ -302,7 +329,7 @@ export function Player({ apiBase, media }: Props) {
       video.load();
       setPlaying(false);
     };
-  }, [source, sourceNonce, updateBuffered]);
+  }, [source, sourceNonce, updateBuffered, isEmbedSource]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -649,9 +676,21 @@ export function Player({ apiBase, media }: Props) {
       {/* Ambient background glow */}
       <AmbientBackground accentColor={branding.accentColor} />
 
+      {isEmbedSource && source && (
+        <iframe
+          key={`${source.url}-${sourceNonce}`}
+          src={source.url}
+          title="Embedded player"
+          className="player-video"
+          allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+          allowFullScreen
+          referrerPolicy="origin"
+        />
+      )}
+
       <video
         ref={videoRef}
-        className="player-video"
+        className={isEmbedSource ? 'player-video hidden' : 'player-video'}
         playsInline
         autoPlay
         crossOrigin="anonymous"
@@ -683,7 +722,7 @@ export function Player({ apiBase, media }: Props) {
       {/* Top Header Bar */}
       <PlayerHeader
         branding={branding}
-        title={payload?.title}
+        title={payload?.title ? `${payload.title}${payload.year ? ` (${payload.year})` : ''}` : undefined}
         subtitle={episodeLabel}
         visible={controlsVisible}
       />

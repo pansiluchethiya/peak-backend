@@ -11,6 +11,7 @@ import {
   signAdminToken,
 } from '../middleware/auth.js';
 import { readBranding, writeBranding, type BrandingConfig } from '../services/branding.js';
+import { loadProviderOrder, providersOrderPath, saveProviderOrder } from '../providers/order.js';
 import {
   getDb,
   listProviderStates,
@@ -124,17 +125,50 @@ export async function adminRoutes(app: FastifyInstance, options: AdminOptions): 
   app.get('/api/v1/admin/providers', { preHandler: requireAdmin }, async () => {
     const states = new Map(listProviderStates().map((state) => [state.id, state]));
     return {
-      providers: manager.list().map((provider) => {
+      providers: manager.list().map((provider, index) => {
         const state = states.get(provider.id);
         return {
           id: provider.id,
           name: provider.name,
+          description: provider.description ?? null,
           enabled: provider.enabled !== false && (state?.enabled ?? true),
           lastSuccess: state?.lastSuccess ?? null,
           errorCount: state?.errorCount ?? 0,
+          order: index,
         };
       }),
     };
+  });
+
+  app.get('/api/v1/admin/providers/order', { preHandler: requireAdmin }, async () => {
+    const order = loadProviderOrder();
+    const registered = manager.list().map((provider) => provider.id);
+    const merged = [
+      ...order.filter((id) => registered.includes(id)),
+      ...registered.filter((id) => !order.includes(id)),
+    ];
+    return { order: merged, file: providersOrderPath() };
+  });
+
+  app.put('/api/v1/admin/providers/order', { preHandler: requireAdmin }, async (request, reply) => {
+    const body = (request.body ?? {}) as { order?: unknown };
+    if (!Array.isArray(body.order)) {
+      return reply.code(400).send({ error: 'order must be an array of provider ids' });
+    }
+    const order = body.order.filter((value): value is string => typeof value === 'string');
+    const registered = new Set(manager.list().map((provider) => provider.id));
+    const unknown = order.filter((id) => !registered.has(id));
+    if (unknown.length > 0) {
+      return reply.code(400).send({ error: `unknown provider: ${unknown.join(', ')}` });
+    }
+    try {
+      saveProviderOrder(order);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return reply.code(500).send({ error: `could not persist the provider order: ${message}` });
+    }
+    manager.reorder(order);
+    return { ok: true, order: manager.list().map((provider) => provider.id) };
   });
 
   app.patch('/api/v1/admin/providers/:id', { preHandler: requireAdmin }, async (request, reply) => {

@@ -1,4 +1,5 @@
 import { isProviderEnabled, recordProviderResult } from '../services/db.js';
+import { applyProviderOrder } from './order.js';
 import type {
   AggregatedResult,
   MediaRef,
@@ -25,12 +26,18 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 export class ProviderManager {
   constructor(
-    private readonly providers: Provider[],
+    private providers: Provider[],
     private readonly options: { timeoutMs?: number } = {},
   ) {}
 
   list(): Provider[] {
     return [...this.providers];
+  }
+
+  /** Re-sort the registered providers, e.g. after the admin changed the order. */
+  reorder(order: string[]): Provider[] {
+    this.providers = applyProviderOrder(this.providers, order);
+    return this.list();
   }
 
   async getSources(
@@ -49,10 +56,14 @@ export class ProviderManager {
         const started = Date.now();
         try {
           const result = await withTimeout(provider.getSources(media), timeoutMs);
-          const ok = result.sources.length > 0;
-          recordProviderResult(provider.id, ok);
           const reported = result.diagnostics ?? [];
-          const reportedFailure = reported.find((diagnostic) => !diagnostic.ok);
+          const failures = reported.filter((diagnostic) => !diagnostic.ok);
+          // A provider only counts as healthy when it produced sources and not
+          // all of its own diagnostics failed (partial aggregations still work).
+          const ok =
+            result.sources.length > 0 && (reported.length === 0 || failures.length < reported.length);
+          recordProviderResult(provider.id, ok);
+          const reportedFailure = failures[0];
           return {
             provider,
             result,

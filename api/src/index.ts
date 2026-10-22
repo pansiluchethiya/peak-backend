@@ -10,6 +10,8 @@ import { proxyRoutes } from './routes/proxy.js';
 import { adminRoutes } from './routes/admin.js';
 import { ProviderManager } from './providers/index.js';
 import { defaultProviders } from './providers/registry.js';
+import { applyProviderOrder, loadProviderOrder } from './providers/order.js';
+import { providersRoutes } from './routes/providers.js';
 import type { Provider } from './providers/types.js';
 import { assertProductionConfig } from './config.js';
 import { isLocalAddress } from './services/geo.js';
@@ -21,9 +23,9 @@ export interface ServerOptions {
 }
 
 export function buildServer(options: ServerOptions = {}): FastifyInstance {
+  const ordered = applyProviderOrder(options.providers ?? defaultProviders(), loadProviderOrder());
   const manager =
-    options.manager ??
-    new ProviderManager(options.providers ?? defaultProviders(), { timeoutMs: options.timeoutMs });
+    options.manager ?? new ProviderManager(ordered, { timeoutMs: options.timeoutMs });
   const app = Fastify({
     logger: false,
     trustProxy: (address: string) => isLocalAddress(address),
@@ -36,6 +38,7 @@ export function buildServer(options: ServerOptions = {}): FastifyInstance {
   app.register(recommendationsRoutes);
   app.register(streamRoutes, { manager });
   app.register(proxyRoutes);
+  app.register(providersRoutes, { manager });
   app.register(adminRoutes, { manager });
 
   return app;

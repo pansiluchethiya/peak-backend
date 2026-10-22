@@ -47,6 +47,8 @@ export interface AggregatedResult {
 export interface Provider {
   id: string;
   name: string;
+  /** Short human readable summary shown in the admin dashboard. */
+  description?: string;
   /** Default-on switch; the SQLite toggle is authoritative at runtime. */
   enabled?: boolean;
   getSources(media: MediaRef): Promise<ProviderResult>;

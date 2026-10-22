@@ -44,9 +44,14 @@ export default function ProvidersPage() {
         title="Providers"
         subtitle="Enable or disable a source instantly. Changes apply to the next stream request — no restart."
         actions={
-          <Link href="/test" className="btn btn-primary">
-            Open test bench
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link href="/providers/order" className="btn btn-ghost">
+              Provider order
+            </Link>
+            <Link href="/test" className="btn btn-primary">
+              Open test bench
+            </Link>
+          </div>
         }
       />
 
@@ -80,6 +85,11 @@ export default function ProvidersPage() {
                           <div>
                             <p className="font-semibold text-white/90">{provider.name}</p>
                             <p className="mt-0.5 font-mono text-[10px] text-white/30">{provider.id}</p>
+                            {provider.description && (
+                              <p className="mt-1 max-w-md text-[11.5px] leading-snug text-white/40">
+                                {provider.description}
+                              </p>
+                            )}
                           </div>
                         </div>
                       </td>

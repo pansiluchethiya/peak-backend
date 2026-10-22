@@ -25,8 +25,9 @@ interface ApiResponse {
 }
 
 function endpoint(media: MediaRef): URL {
-  const base = process.env.VIDAPI_BASE_URL;
-  if (!base) throw new Error('VIDAPI_BASE_URL is not configured');
+  const configured = process.env.VIDAPI_BASE_URL?.trim();
+  if (!configured) throw new Error('VIDAPI_BASE_URL is not configured');
+  const base = /^https?:\/\//i.test(configured) ? configured : `https://${configured}`;
   const url = new URL(`sources${base.endsWith('/') ? '' : '/'}`, base.endsWith('/') ? base : `${base}/`);
   url.searchParams.set('tmdbId', media.tmdbId);
   url.searchParams.set('type', media.type);
@@ -40,6 +41,7 @@ function endpoint(media: MediaRef): URL {
 export const vidapiProvider: Provider = {
   id: 'vidapi',
   name: 'VidApi',
+  description: 'Self-hosted VidApi JSON API',
   enabled: true,
   async getSources(media: MediaRef): Promise<ProviderResult> {
     const started = Date.now();

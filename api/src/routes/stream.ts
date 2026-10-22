@@ -89,7 +89,9 @@ async function handleStream(
   }
 
   const sources = aggregated.sources.map((source) => ({
-    url: proxyUrl(source.rawUrl, source.headers),
+    // Embed sources are HTML pages that the player renders in an iframe, they
+    // must not be sent through the media proxy.
+    url: source.codec === 'html5' ? source.rawUrl : proxyUrl(source.rawUrl, source.headers),
     quality: source.quality,
     codec: source.codec,
     provider: source.provider,

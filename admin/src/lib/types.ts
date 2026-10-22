@@ -15,9 +15,11 @@ export interface Stats {
 export interface ProviderInfo {
   id: string;
   name: string;
+  description?: string | null;
   enabled: boolean;
   lastSuccess: string | null;
   errorCount: number;
+  order?: number;
 }
 
 export interface ProviderList {
