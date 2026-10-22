@@ -14,6 +14,7 @@ import { applyProviderOrder, loadProviderOrder } from './providers/order.js';
 import { watchRoutes } from './routes/watch.js';
 import { metaRoutes } from './routes/meta.js';
 import { liveRoutes } from './routes/live.js';
+import { previewRoutes } from './routes/preview.js';
 import { providersRoutes } from './routes/providers.js';
 import type { Provider } from './providers/types.js';
 import { assertProductionConfig } from './config.js';
@@ -51,6 +52,7 @@ export function buildServer(options: ServerOptions = {}): FastifyInstance {
   app.register(metaRoutes);
   app.register(liveRoutes);
   app.register(streamRoutes, { manager });
+  app.register(previewRoutes);
   app.register(proxyRoutes);
   app.register(providersRoutes, { manager });
   app.register(adminRoutes, { manager });
