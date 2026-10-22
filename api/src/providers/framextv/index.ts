@@ -57,7 +57,8 @@ export const framextvProvider: Provider = {
     let payload: FramexResponse | undefined;
     let lastError = '';
 
-    for (const base of API_BASES) {
+    // The mirrors answer at different speeds, the first one with sources wins.
+    const attempts = API_BASES.map(async (base) => {
       const url = new URL('/api/stream', base);
       url.searchParams.set('type', media.type);
       url.searchParams.set('id', media.tmdbId);
@@ -65,20 +66,22 @@ export const framextvProvider: Provider = {
         url.searchParams.set('season', String(media.season ?? 1));
         url.searchParams.set('episode', String(media.episode ?? 1));
       }
-      try {
-        const response = await fetchJson<FramexResponse>(url, {
-          headers: { Origin: 'https://framextv.cc' },
-          referer,
-          timeoutMs: 10000,
-        });
-        if (response?.success && (response.sources?.length ?? 0) > 0) {
-          payload = response;
-          break;
-        }
-        lastError = response?.error ?? 'no sources';
-      } catch (error) {
-        lastError = error instanceof Error ? error.message : String(error);
+      const response = await fetchJson<FramexResponse>(url, {
+        headers: { Origin: 'https://framextv.cc' },
+        referer,
+        timeoutMs: 6000,
+      });
+      if (response?.success && (response.sources?.length ?? 0) > 0) return response;
+      throw new Error(response?.error ?? 'no sources');
+    });
+
+    const results = await Promise.allSettled(attempts);
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        payload = result.value;
+        break;
       }
+      lastError = result.reason instanceof Error ? result.reason.message : String(result.reason);
     }
 
     if (!payload) {
