@@ -27,7 +27,7 @@ registry is the single source of truth for:
 are tried:
 
 ```json
-["vidapi", "vidsrc", "mapple", "vidlink", "2embed", "rivestream", "vidzee", "vixsrc"]
+["vidapi", "vidsrc", "mapple", "framextv", "mcguffin", "atlantic", "vidlink", "2embed", "rivestream", "vidzee", "vixsrc"]
 ```
 
 * The API reads the file on startup (`PROVIDERS_ORDER_FILE`, default
@@ -82,7 +82,9 @@ None of the new providers require an API key or a login.
   browser (libsodium + `fu.wasm`), so the API cannot request it directly. The
   provider therefore falls back to the public embed page, which the player
   renders in an iframe. When the token API is reachable the provider returns
-  the direct MP4 renditions (360p/480p/720p) plus the caption tracks.
+  the direct MP4 renditions (360p/480p/720p) plus the caption tracks. The
+  same VidLink mirrors are also served by the **framextv** provider, which
+  returns them as direct MP4 links.
 
 ## 2embed
 
@@ -135,12 +137,45 @@ None of the new providers require an API key or a login.
 ## mapple
 
 * **Endpoint pattern** – `https://mapple.fun/watch/movie/<tmdbId>`,
-  `https://mapple.fun/watch/tv/<tmdbId>/<season>/<episode>`.
+  `https://mapple.fun/watch/tv/<tmdbId>-<season>-<episode>`
+  (`mappletv.uk` redirects to `mapple.fun`, it is the same service).
 * **Env vars** – none.
-* **Notes** – the watch page loads the stream through a session token
-  (`/api/ui/session`). When the playlist is not part of the server rendered
-  markup the provider falls back to the embed page, which the player renders
-  in an iframe.
+* **Notes** – the watch page hands out a session token that is bound to the
+  cookies of the page (`_mapple_site`). The provider therefore loads the watch
+  page first, then walks through the upstream flow:
+  `POST /api/ui/session` → `POST /api/media-session` (which answers with a
+  SHA-256 proof of work) → `POST /api/encrypt` → `GET /api/stream-encrypted`.
+  Episodes are identified by `{season}-{episode}` and the provider tries the
+  mirrors `mapple`, `s25`, `s10`, `s2` and `s28` until one of them has a
+  stream.
+
+## framextv
+
+* **Endpoint pattern** – `https://api.framextv.xyz/api/stream?type=movie&id=<tmdbId>`,
+  `https://api.framextv.xyz/api/stream?type=tv&id=<tmdbId>&season=<s>&episode=<e>`
+  (`api.framextv.cc` and `api.framextv.tech` are the mirrors).
+* **Env vars** – none.
+* **Notes** – plain JSON with `sources[]` (MP4 and HLS renditions, served
+  through the framextv proxy) and the `subtitles[]` of the title. The API
+  returns different providers per title (VidLink, Headhunter, …).
+
+## mcguffin
+
+* **Endpoint pattern** – `https://player.themcguffin.me/embed/movie/<tmdbId>`,
+  `https://player.themcguffin.me/embed/tv/<tmdbId>/<season>/<episode>`;
+  the session API is `POST https://player.themcguffin.me/api/embed/session`
+  and the subtitles `GET https://player.themcguffin.me/api/subtitles/<tmdbId>?mediaType=movie`.
+* **Env vars** – none.
+* **Notes** – the session endpoint returns the playback url of the active
+  server (`https://stream.themcguffin.me/c/…`) plus every alternative source.
+
+## atlantic
+
+* **Endpoint pattern** – `https://cdn.hls.lol/content/movie/<tmdbId>`,
+  `https://cdn.hls.lol/content/tv/<tmdbId>/<season>/<episode>`.
+* **Env vars** – none.
+* **Notes** – Atlantic runs on the same platform as VidZee, the content API
+  answers with the signed HLS playlist of the title.
 
 ---
 

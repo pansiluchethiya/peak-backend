@@ -113,6 +113,7 @@ export interface OpenOptions {
   headers?: Record<string, string>;
   timeoutMs?: number;
   method?: string;
+  body?: string;
 }
 
 export interface SafeResponse {
@@ -135,6 +136,7 @@ function requestOnce(target: URL, options: OpenOptions): Promise<SafeResponse> {
         headers: {
           'User-Agent': USER_AGENT,
           'Accept-Encoding': 'identity',
+          ...(options.body ? { 'Content-Length': Buffer.byteLength(options.body) } : {}),
           ...options.headers,
         },
         lookup: safeLookup,
@@ -144,7 +146,12 @@ function requestOnce(target: URL, options: OpenOptions): Promise<SafeResponse> {
     );
     request.on('timeout', () => request.destroy(new Error('upstream request timed out')));
     request.on('error', reject);
-    request.end();
+    if (options.body) {
+      request.write(options.body);
+      request.end();
+    } else {
+      request.end();
+    }
   });
 }
 

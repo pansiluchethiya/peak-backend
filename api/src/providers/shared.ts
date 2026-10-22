@@ -11,6 +11,8 @@ export interface FetchOptions {
   headers?: Record<string, string>;
   referer?: string;
   origin?: string;
+  method?: string;
+  body?: unknown;
   timeoutMs?: number;
   maxBytes?: number;
 }
@@ -20,6 +22,7 @@ function requestHeaders(options: FetchOptions): Record<string, string> {
     'User-Agent': USER_AGENT,
     Accept: 'text/html,application/xhtml+xml,application/json,*/*',
     'Accept-Language': 'en-US,en;q=0.9',
+    ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
     ...(options.headers ?? {}),
   };
   if (options.referer) headers.Referer = options.referer;
@@ -31,6 +34,8 @@ function requestHeaders(options: FetchOptions): Record<string, string> {
 export async function fetchText(url: string | URL, options: FetchOptions = {}): Promise<string> {
   const response = await readText(url, {
     headers: requestHeaders(options),
+    method: options.method,
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
     timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     maxBytes: options.maxBytes ?? DEFAULT_MAX_BYTES,
   });
@@ -44,6 +49,8 @@ export async function fetchText(url: string | URL, options: FetchOptions = {}): 
 export async function fetchJson<T>(url: string | URL, options: FetchOptions = {}): Promise<T> {
   const response = await readJson<T>(url, {
     headers: { Accept: 'application/json', ...requestHeaders(options) },
+    method: options.method,
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
     timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     maxBytes: options.maxBytes ?? DEFAULT_MAX_BYTES,
   });
@@ -114,6 +121,84 @@ export function embedSource(rawUrl: string, referer = rawUrl): RawSource {
     headers: mediaHeaders(referer),
     adaptive: false,
   };
+}
+
+/**
+ * Minimal cookie jar. Several providers hand out a signed session that is
+ * bound to the cookies of the page that was loaded first.
+ */
+export class CookieJar {
+  private readonly cookies = new Map<string, string>();
+
+  absorb(setCookie: string | string[] | undefined): void {
+    const values = Array.isArray(setCookie) ? setCookie : setCookie ? [setCookie] : [];
+    for (const value of values) {
+      const [pair] = value.split(';');
+      if (!pair) continue;
+      const index = pair.indexOf('=');
+      if (index <= 0) continue;
+      this.cookies.set(pair.slice(0, index).trim(), pair.slice(index + 1).trim());
+    }
+  }
+
+  header(): string | undefined {
+    if (this.cookies.size === 0) return undefined;
+    return [...this.cookies].map(([name, value]) => `${name}=${value}`).join('; ');
+  }
+}
+
+/** Fetch a document as text and keep the cookies of the response. */
+export async function fetchTextWithJar(
+  url: string | URL,
+  jar: CookieJar,
+  options: FetchOptions = {},
+): Promise<{ text: string; status: number }> {
+  const cookie = jar.header();
+  const response = await readText(url, {
+    headers: requestHeaders({
+      ...options,
+      headers: {
+        ...(options.headers ?? {}),
+        ...(cookie ? { Cookie: cookie } : {}),
+      },
+    }),
+    method: options.method,
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    maxBytes: options.maxBytes ?? DEFAULT_MAX_BYTES,
+  });
+  jar.absorb(response.headers['set-cookie']);
+  return { text: response.text, status: response.status };
+}
+
+/** Fetch a JSON document and keep the cookies of the response. */
+export async function fetchJsonWithJar<T>(
+  url: string | URL,
+  jar: CookieJar,
+  options: FetchOptions = {},
+): Promise<{ data: T; status: number }> {
+  const cookie = jar.header();
+  const response = await readText(url, {
+    headers: requestHeaders({
+      ...options,
+      headers: {
+        ...(options.headers ?? {}),
+        ...(cookie ? { Cookie: cookie } : {}),
+      },
+    }),
+    method: options.method,
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    maxBytes: options.maxBytes ?? DEFAULT_MAX_BYTES,
+  });
+  jar.absorb(response.headers['set-cookie']);
+  let data: T;
+  try {
+    data = JSON.parse(response.text) as T;
+  } catch {
+    throw new Error('upstream returned invalid json');
+  }
+  return { data, status: response.status };
 }
 
 /** Extract absolute media URLs (m3u8/mp4) from an HTML or JSON payload. */

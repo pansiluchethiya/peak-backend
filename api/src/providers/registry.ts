@@ -8,6 +8,9 @@ import { rivestreamProvider } from './rivestream/index.js';
 import { vidzeeProvider } from './vidzee/index.js';
 import { vixsrcProvider } from './vixsrc/index.js';
 import { mappleProvider } from './mapple/index.js';
+import { framextvProvider } from './framextv/index.js';
+import { mcguffinProvider } from './mcguffin/index.js';
+import { atlanticProvider } from './atlantic/index.js';
 
 export function defaultProviders(): Provider[] {
   return [
@@ -19,6 +22,9 @@ export function defaultProviders(): Provider[] {
     vidzeeProvider,
     vixsrcProvider,
     mappleProvider,
+    framextvProvider,
+    mcguffinProvider,
+    atlanticProvider,
   ];
 }
 
