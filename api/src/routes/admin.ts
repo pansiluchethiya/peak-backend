@@ -11,13 +11,17 @@ import {
   signAdminToken,
 } from '../middleware/auth.js';
 import { readBranding, writeBranding, type BrandingConfig } from '../services/branding.js';
-import { loadProviderOrder, providersOrderPath, saveProviderOrder } from '../providers/order.js';
+import { addPlaylist, removePlaylist, setPlaylistEnabled, listPlaylists, listChannels, setChannelEnabled, listGroups, replaceChannels, updatePlaylistSync } from '../services/iptv/store.js';
+import { syncPlaylist } from '../services/iptv/sync.js';
+import { getCache } from '../services/cache.js';
+import { fetchZliveChannels } from '../services/iptv/adapters/zlive.js';
+import { resolveDliveChannel } from '../services/iptv/adapters/dlive.js';
 import {
   getDb,
   listProviderStates,
   setProviderEnabled,
 } from '../services/db.js';
-import { getCache } from '../services/cache.js';
+import { loadProviderOrder, providersOrderPath, saveProviderOrder } from '../providers/order.js';
 
 interface AdminOptions {
   manager: ProviderManager;
@@ -120,6 +124,134 @@ export async function adminRoutes(app: FastifyInstance, options: AdminOptions): 
       tagline: (body.tagline as string).trim(),
     };
     return writeBranding(config);
+  });
+
+  // --- IPTV playlists ---
+  app.get('/api/v1/admin/iptv/playlists', { preHandler: requireAdmin }, async () => {
+    return { playlists: listPlaylists() };
+  });
+
+  app.post('/api/v1/admin/iptv/playlists', { preHandler: requireAdmin }, async (request, reply) => {
+    const body = (request.body ?? {}) as { name?: string; url?: string };
+    if (!body.name?.trim() || !body.url?.trim()) {
+      return reply.code(400).send({ error: 'name and url are required' });
+    }
+    try {
+      const playlist = addPlaylist(body.name.trim(), body.url.trim());
+      return { playlist };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return reply.code(400).send({ error: message });
+    }
+  });
+
+  app.post('/api/v1/admin/iptv/playlists/:id/sync', { preHandler: requireAdmin }, async (request, reply) => {
+    const id = Number.parseInt((request.params as { id: string }).id, 10);
+    if (!Number.isFinite(id)) return reply.code(400).send({ error: 'invalid id' });
+    const result = await syncPlaylist(id);
+    return result;
+  });
+
+  app.delete('/api/v1/admin/iptv/playlists/:id', { preHandler: requireAdmin }, async (request, reply) => {
+    const id = Number.parseInt((request.params as { id: string }).id, 10);
+    if (!Number.isFinite(id)) return reply.code(400).send({ error: 'invalid id' });
+    const ok = removePlaylist(id);
+    if (!ok) return reply.code(404).send({ error: 'not found' });
+    return { ok: true };
+  });
+
+  app.post('/api/v1/admin/iptv/playlists/:id/toggle', { preHandler: requireAdmin }, async (request, reply) => {
+    const id = Number.parseInt((request.params as { id: string }).id, 10);
+    const body = (request.body ?? {}) as { enabled?: boolean };
+    if (!Number.isFinite(id)) return reply.code(400).send({ error: 'invalid id' });
+    setPlaylistEnabled(id, body.enabled !== false);
+    return { ok: true };
+  });
+
+  app.get('/api/v1/admin/iptv/channels', { preHandler: requireAdmin }, async (request) => {
+    const q = request.query as { q?: string; group?: string; limit?: string };
+    const limit = q.limit ? Number.parseInt(q.limit, 10) : 200;
+    return { channels: listChannels({ q: q.q, group: q.group, limit }) };
+  });
+
+  app.post('/api/v1/admin/iptv/channels/:id/toggle', { preHandler: requireAdmin }, async (request, reply) => {
+    const id = (request.params as { id: string }).id;
+    const body = (request.body ?? {}) as { enabled?: boolean };
+    setChannelEnabled(id, body.enabled !== false);
+    return { ok: true };
+  });
+
+  app.get('/api/v1/admin/iptv/groups', { preHandler: requireAdmin }, async () => {
+    return { groups: listGroups() };
+  });
+
+  app.post('/api/v1/admin/iptv/import/zlive', { preHandler: requireAdmin }, async (_request, reply) => {
+    try {
+      const channels = await fetchZliveChannels();
+      // Store as a single playlist named "zlive.st"
+      let playlist = listPlaylists().find((p) => p.name === 'zlive.st');
+      if (!playlist) playlist = addPlaylist('zlive.st', 'https://iptv.zlive.st/channels.json');
+      replaceChannels(
+        playlist.id,
+        channels.map((ch, index) => ({
+          name: ch.name,
+          tvgId: ch.tvgId,
+          groupTitle: ch.groupTitle,
+          logo: ch.logo,
+          url: ch.url,
+          headers: ch.headers,
+          language: ch.language,
+          country: ch.country,
+          position: index,
+        })),
+      );
+      updatePlaylistSync(playlist.id, channels.length, null);
+      return { ok: true, playlist, channelCount: channels.length };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return reply.code(502).send({ error: message });
+    }
+  });
+
+  app.post('/api/v1/admin/iptv/import/dlive', { preHandler: requireAdmin }, async (request, reply) => {
+    const body = (request.body ?? {}) as { id?: string; name?: string };
+    if (!body.id?.trim()) return reply.code(400).send({ error: 'id is required' });
+    try {
+      const resolved = await resolveDliveChannel(body.id.trim());
+      let playlist = listPlaylists().find((p) => p.name === 'dlive.sx');
+      if (!playlist) playlist = addPlaylist('dlive.sx', 'https://dlive.sx/');
+      const existing = listChannels({}).filter((c) => c.playlistId === playlist!.id);
+      replaceChannels(playlist.id, [
+        ...existing.map((c) => ({
+          name: c.name,
+          tvgId: c.tvgId,
+          groupTitle: c.groupTitle,
+          logo: c.logo,
+          url: c.url,
+          headers: c.headers,
+          language: c.language,
+          country: c.country,
+          position: c.position,
+          enabled: c.enabled,
+        })),
+        {
+          name: body.name?.trim() || resolved.name,
+          tvgId: body.id.trim(),
+          groupTitle: 'dlive',
+          logo: null,
+          url: resolved.url,
+          headers: resolved.headers,
+          language: null,
+          country: null,
+          position: existing.length,
+        },
+      ]);
+      updatePlaylistSync(playlist.id, existing.length + 1, null);
+      return { ok: true, playlist, url: resolved.url };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return reply.code(502).send({ error: message });
+    }
   });
 
   app.get('/api/v1/admin/providers', { preHandler: requireAdmin }, async () => {

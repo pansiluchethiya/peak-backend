@@ -4,6 +4,7 @@ export interface ProxyPayload {
   url: string;
   headers?: Record<string, string>;
   exp?: number;
+  live?: boolean;
 }
 
 export class ProxyTokenError extends Error {

@@ -138,7 +138,7 @@ export async function proxyRoutes(app: FastifyInstance): Promise<void> {
           ...payload.headers,
           ...(request.headers.range ? { Range: request.headers.range } : {}),
         },
-        timeoutMs: 15000,
+        timeoutMs: payload.live ? 30000 : 15000,
       });
     } catch (error) {
       if (error instanceof UnsafeTargetError) {
@@ -183,13 +183,15 @@ export async function proxyRoutes(app: FastifyInstance): Promise<void> {
       if (!text.trimStart().startsWith('#EXTM3U')) {
         return reply.code(502).send({ error: 'upstream playlist was invalid' });
       }
+      const isLive = payload.live === true || !text.includes('#EXT-X-ENDLIST');
+
       const rewritten = rewritePlaylist(text, upstream.url.toString(), payload.headers);
       return reply
         .header('content-type', 'application/vnd.apple.mpegurl')
         .header('x-content-type-options', 'nosniff')
         .header('content-security-policy', "default-src 'none'; sandbox")
         .header('access-control-allow-origin', '*')
-        .header('cache-control', 'no-store')
+        .header('cache-control', isLive ? 'no-store' : 'no-store')
         .send(rewritten);
     }
 
@@ -225,7 +227,7 @@ export async function proxyRoutes(app: FastifyInstance): Promise<void> {
       .header('x-content-type-options', 'nosniff')
       .header('content-security-policy', "default-src 'none'; sandbox")
       .header('access-control-allow-origin', '*')
-      .header('cache-control', 'public, max-age=3600');
+      .header('cache-control', payload.live ? 'no-store' : 'public, max-age=3600');
 
     if (contentRange) response.header('content-range', contentRange);
     if (acceptRanges) response.header('accept-ranges', acceptRanges);

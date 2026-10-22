@@ -16,6 +16,8 @@ export interface RawSource {
   provider?: string;
   /** True when the URL is a multi-bitrate master playlist suitable for ABR. */
   adaptive?: boolean;
+  /** ISO 639-1 language code of the stream (defaults to "und"). */
+  language?: string;
 }
 
 export interface RawSubtitle {
@@ -23,6 +25,7 @@ export interface RawSubtitle {
   lang: string;
   label: string;
   headers?: Record<string, string>;
+  provider?: string;
 }
 
 export interface ProviderResult {
